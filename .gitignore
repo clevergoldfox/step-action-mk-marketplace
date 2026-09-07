@@ -1,0 +1,9 @@
+/vendor/
+/node_modules/
+.phpunit.result.cache
+.phpunit.cache/
+
+# Never commit credentials. Stripe secret keys live in wp-config.php,
+# which is itself outside this repository.
+.env
+*.local.php
