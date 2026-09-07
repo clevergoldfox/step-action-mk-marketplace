@@ -32,17 +32,37 @@ define('MK_VERSION', '0.1.0');
 
 $mk_autoload = MK_PLUGIN_DIR . 'vendor/autoload.php';
 
-if (!file_exists($mk_autoload)) {
-    add_action('admin_notices', static function (): void {
-        echo '<div class="notice notice-error"><p><strong>MK Marketplace:</strong> '
-            . 'dependencies are not installed. Run <code>composer install</code> '
-            . 'in the plugin directory.</p></div>';
+if (file_exists($mk_autoload)) {
+    require_once $mk_autoload;
+} else {
+    /**
+     * Fallback PSR-4 autoloader for our own classes.
+     *
+     * Everything except src/Stripe is plain PHP with no third-party
+     * dependency, so the schema, fee logic, numbering and order statuses can
+     * all load and be exercised before Composer is set up. Only the Stripe
+     * layer actually needs the vendor directory, and it says so when reached.
+     */
+    spl_autoload_register(static function (string $class): void {
+        if (!str_starts_with($class, 'MK\\')) {
+            return;
+        }
+
+        $path = MK_PLUGIN_DIR . 'src/'
+            . str_replace('\\', '/', substr($class, 3)) . '.php';
+
+        if (is_readable($path)) {
+            require_once $path;
+        }
     });
 
-    return;
+    add_action('admin_notices', static function (): void {
+        echo '<div class="notice notice-warning"><p><strong>MK Marketplace:</strong> '
+            . 'running without the Stripe SDK. Schema, fees and order statuses '
+            . 'are active; payment features are unavailable until '
+            . '<code>composer install</code> is run in the plugin directory.</p></div>';
+    });
 }
-
-require_once $mk_autoload;
 
 register_activation_hook(__FILE__, static function (): void {
     Install\Migrator::run();
