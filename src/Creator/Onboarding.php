@@ -178,7 +178,16 @@ final class Onboarding
 
         $userId = get_current_user_id();
 
-        if ($userId === 0 || !current_user_can('dokan_view_store')) {
+        // dokan_is_user_seller(), not a capability check. Dokan Lite's seller
+        // role has 77 capabilities and 'dokan_view_store' is not among them --
+        // gating on it locked every creator out of their own payout settings
+        // while the menu item sat there in the sidebar. Vendor identity is the
+        // actual question being asked, so ask it directly. PublishGate uses
+        // the same test.
+        if ($userId === 0
+            || !function_exists('dokan_is_user_seller')
+            || !dokan_is_user_seller($userId)
+        ) {
             echo '<div class="dokan-error">この画面を表示する権限がありません。</div>';
 
             return;

@@ -333,7 +333,16 @@ $before = get_option('mk_creator_seq');
 $n = new MK\Creator\Numbering();
 $got = [];
 for ($i = 0; $i < 5; $i++) { $got[] = $n->allocate(); }
-check('5 sequential', $got === ['A00001','A00002','A00003','A00004','A00005'], implode(' ', $got));
+
+// Expected values are derived from the counter, not hardcoded. Asserting
+// A00001 silently required an empty database, so the first real creator on
+// the site broke a test about concurrency for reasons having nothing to do
+// with concurrency.
+$expected = [];
+for ($i = 1; $i <= 5; $i++) { $expected[] = $n->format((int) $before + $i); }
+
+check('5 sequential', $got === $expected,
+    implode(' ', $got) . ($got === $expected ? '' : '  expected ' . implode(' ', $expected)));
 check('all distinct', count(array_unique($got)) === 5);
 update_option('mk_creator_seq', $before);
 check('counter reset', get_option('mk_creator_seq') === $before, 'back to ' . $before);
@@ -503,6 +512,57 @@ check('add-to-cart replaced',
     'default add-to-cart removed');
 check('buy button hooked',
     has_action('woocommerce_single_product_summary', ['MK\Checkout\Controller', 'renderBuyButton']) !== false);
+
+echo "\n=== payouts page actually renders for a creator ===\n";
+// Capability names are not guessable. Gating this page on a capability the
+// seller role does not have locked every creator out of their own payout
+// settings while the menu item sat in the sidebar looking fine -- and no test
+// caught it, because nothing rendered the page.
+$rndSeller = wp_insert_user([
+    'user_login' => 'mk_smoke_render_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($rndSeller)) {
+    check('create render seller', false, $rndSeller->get_error_message());
+} else {
+    $wasUser = get_current_user_id();
+    $seq     = get_option('mk_creator_seq');
+
+    wp_set_current_user($rndSeller);
+
+    ob_start();
+    MK\Creator\Onboarding::renderPage([MK\Creator\Onboarding::PAGE => MK\Creator\Onboarding::PAGE]);
+    $html = (string) ob_get_clean();
+
+    $number = get_user_meta($rndSeller, 'mk_creator_number', true);
+
+    check('not refused', !str_contains($html, '権限がありません'),
+        str_contains($html, '権限がありません') ? 'PERMISSION DENIED' : '');
+    check('shows creator number', $number !== '' && str_contains($html, (string) $number), (string) $number);
+    check('shows setup button', str_contains($html, '受取口座を設定する'));
+    check('warns selling is blocked', str_contains($html, '商品は公開されません'));
+
+    // A logged-in customer is not a vendor and must still be refused.
+    $cust = wp_insert_user([
+        'user_login' => 'mk_smoke_cust_' . wp_rand(1000, 9999),
+        'user_pass'  => wp_generate_password(24),
+        'role'       => 'customer',
+    ]);
+    wp_set_current_user($cust);
+    ob_start();
+    MK\Creator\Onboarding::renderPage([MK\Creator\Onboarding::PAGE => MK\Creator\Onboarding::PAGE]);
+    $custHtml = (string) ob_get_clean();
+    check('non-vendor refused', str_contains($custHtml, '権限がありません'));
+
+    wp_set_current_user($wasUser);
+    update_option('mk_creator_seq', $seq);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($rndSeller);
+    wp_delete_user($cust);
+    check('render fixtures removed', !get_userdata($rndSeller) && !get_userdata($cust));
+}
 
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
