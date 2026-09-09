@@ -36,9 +36,17 @@ final class Client
             );
         }
 
+        // No explicit stripe_version. The SDK uses the version it was built
+        // against, which is also what the account and the webhook destination
+        // are on. Pinning an older version here would put API calls and
+        // webhook payloads on different schemas -- and pinning *backwards*
+        // past what the installed SDK expects risks parameter shapes it does
+        // not produce and response fields it does not know about.
+        //
+        // If a future upgrade needs pinning, pin forward and to the version
+        // the destination shows in the Stripe dashboard, not an arbitrary one.
         self::$instance = new StripeClient([
-            'api_key'        => self::secretKey(),
-            'stripe_version' => '2024-06-20',
+            'api_key' => self::secretKey(),
         ]);
 
         return self::$instance;
