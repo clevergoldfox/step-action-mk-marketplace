@@ -209,6 +209,52 @@ if (is_wp_error($seller)) {
         !wc_get_order($evilId) && !wc_get_order($goodId) && !get_userdata($seller));
 }
 
+echo "\n=== creator onboarding (dashboard wiring) ===\n";
+$navUrl = dokan_get_navigation_url(MK\Creator\Onboarding::PAGE);
+$nav    = dokan_get_dashboard_nav();
+
+check('nav item registered', isset($nav[MK\Creator\Onboarding::PAGE]),
+    $nav[MK\Creator\Onboarding::PAGE]['title'] ?? 'missing');
+
+// A registered query var contributes a rewrite rule, and a rule that was
+// never flushed does not exist as far as WordPress is concerned: the nav
+// item renders, the URL looks correct, and clicking it 404s.
+$ruleFound = false;
+foreach ((array) get_option('rewrite_rules') as $target) {
+    if (is_string($target) && str_contains($target, MK\Creator\Onboarding::PAGE)) {
+        $ruleFound = true;
+        break;
+    }
+}
+check('rewrite rule flushed', $ruleFound, $ruleFound ? $navUrl : 'page would 404');
+
+check('onboarding return url is https',
+    str_starts_with(add_query_arg(MK\Creator\Onboarding::ACTION_ARG, 'return', home_url('/')), 'https://'));
+
+// Numbering must never reissue: a creator whose number changed would break
+// every link and search that used the old one.
+$numUser = wp_insert_user([
+    'user_login' => 'mk_smoke_num_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($numUser)) {
+    check('create throwaway creator', false, $numUser->get_error_message());
+} else {
+    $seq   = get_option('mk_creator_seq');
+    $first = MK\Creator\Onboarding::ensureNumber($numUser);
+    $again = MK\Creator\Onboarding::ensureNumber($numUser);
+
+    check('number allocated', $first !== '' && MK\Creator\Numbering::isCreatorNumber($first), $first);
+    check('number is idempotent', $first === $again, $first . ' / ' . $again);
+
+    update_option('mk_creator_seq', $seq);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($numUser);
+    check('onboarding fixture removed', !get_userdata($numUser));
+}
+
 echo "\n=== product statuses ===\n";
 foreach (['mk-reserved', 'mk-sold'] as $s) {
     check($s, in_array($s, get_post_stati(), true));

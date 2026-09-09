@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace MK\Stripe;
 
+use MK\Creator\Onboarding;
 use RuntimeException;
 use WP_User;
 
@@ -100,8 +101,11 @@ final class AccountService
         $link = Client::get()->accountLinks->create([
             'account'     => $accountId,
             'type'        => 'account_onboarding',
-            'refresh_url' => home_url('/creator/onboarding/refresh'),
-            'return_url'  => home_url('/creator/onboarding/return'),
+            // Query arguments rather than pretty paths: these are only ever
+            // seen mid-redirect, and an unflushed rewrite rule would 404 the
+            // creator at the exact moment they finish onboarding.
+            'refresh_url' => add_query_arg(Onboarding::ACTION_ARG, 'refresh', home_url('/')),
+            'return_url'  => add_query_arg(Onboarding::ACTION_ARG, 'return', home_url('/')),
         ]);
 
         return $link->url;
