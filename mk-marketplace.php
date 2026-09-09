@@ -30,6 +30,31 @@ define('MK_PLUGIN_FILE', __FILE__);
 define('MK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('MK_VERSION', '0.1.0');
 
+/**
+ * Refuse to load on an unsupported PHP version, before touching the autoloader.
+ *
+ * Composer's own platform_check.php throws a RuntimeException when the running
+ * PHP is below the required version — and an uncaught throw inside a plugin
+ * takes down the ENTIRE site, not just the plugin. On this host the web server
+ * runs 8.3 but /usr/bin/php is 8.0, so any CLI tooling (wp-cli, a cron entry
+ * that forgets the version suffix, a hosting maintenance script) would white-
+ * screen WordPress rather than simply skipping us.
+ *
+ * Returning early degrades instead: the site keeps working, and the admin is
+ * told exactly what is wrong.
+ */
+if (PHP_VERSION_ID < 80100) {
+    add_action('admin_notices', static function (): void {
+        printf(
+            '<div class="notice notice-error"><p><strong>MK Marketplace:</strong> '
+            . 'requires PHP 8.1 or later. This request is running %s.</p></div>',
+            esc_html(PHP_VERSION)
+        );
+    });
+
+    return;
+}
+
 $mk_autoload = MK_PLUGIN_DIR . 'vendor/autoload.php';
 
 if (file_exists($mk_autoload)) {
