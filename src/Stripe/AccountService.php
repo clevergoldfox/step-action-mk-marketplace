@@ -23,11 +23,33 @@ use WP_User;
  * customers. Our creators never do that. The platform is merchant of record;
  * creators only receive transfers.
  *
- * Requesting `transfers` alone keeps identity verification (which satisfies
- * the 本人確認 requirement) while dropping the business-website, product
- * description and MCC requirements entirely.
+ * Requesting `transfers` alone keeps identity verification, which satisfies
+ * the 本人確認 requirement, without configuring the creator as a merchant.
  *
  * Do not add `card_payments` "just in case". It is not free.
+ *
+ * ---------------------------------------------------------------------------
+ * Why business_profile is prefilled
+ * ---------------------------------------------------------------------------
+ * Dropping `card_payments` did NOT, on its own, remove the business-website
+ * demand. That was assumed here for some time and it is not what Stripe does.
+ * Measured against the live test API, a bare transfers-only JP account comes
+ * back with 26 outstanding requirements, and business_profile.url,
+ * .product_description and .mcc are all among them.
+ *
+ * Prefilling business_profile removes all three, taking the creator's own
+ * burden from 26 items to 23 and, more to the point, removing the question
+ * that actually costs sign-ups: an individual selling one used jacket being
+ * asked for their business website.
+ *
+ * This is accurate rather than a trick. For a marketplace seller the platform
+ * IS the storefront, so their Dokan store page is a truthful answer to "where
+ * do you sell?" and Stripe supports platforms supplying it on their behalf.
+ *
+ * business_type is deliberately NOT prefilled. Sending 'individual' would
+ * save one more item, but it would silently misclassify a 法人 creator, and
+ * a wrong answer on a verification form is worth more than one saved field.
+ * The creator declares it themselves in Stripe's hosted flow.
  */
 final class AccountService
 {
@@ -70,12 +92,43 @@ final class AccountService
             'capabilities' => [
                 'transfers' => ['requested' => true],
             ],
+            // Answered on the creator's behalf, so Stripe never asks them for
+            // a business website. See the class docblock.
+            'business_profile' => self::businessProfile($user),
             'settings' => [
                 'payouts' => [
-                    // Default is weekly, which would push a creator's total
-                    // wait past three weeks once stacked on our own 7/14-day
-                    // hold. The client was promised roughly two.
-                    'schedule' => ['interval' => 'daily'],
+                    /*
+                     * Weekly, because Japan leaves no faster automatic option:
+                     * Stripe rejects interval "daily" outright for JP
+                     * merchants, and delay_days is fixed at 4 whatever is
+                     * requested. The alternative, "manual", would let us issue
+                     * each payout ourselves and shave a few days off, but it
+                     * would also make this plugin responsible for creating
+                     * payouts and for handling their failures and retries --
+                     * a second money-moving subsystem to get right, in
+                     * exchange for days. Stripe does that job well; we take
+                     * the days.
+                     *
+                     * The anchor is set explicitly rather than left to
+                     * Stripe's default (currently also friday) so that every
+                     * creator behaves identically and documented timings do
+                     * not silently drift if that default ever changes.
+                     *
+                     * Resulting wait, measured from the buyer's 受取確認:
+                     * our own hold, then 4-10 days for Stripe (funds season
+                     * for 4 days, then leave on the first Friday after that).
+                     *
+                     *   standard  (7-day hold)   11-17 days
+                     *   extended (14-day hold)   18-24 days
+                     *
+                     * Both hold periods are admin-editable options
+                     * (mk_payout_hold_days, mk_payout_hold_days_new), so the
+                     * operator can retune this without a code change.
+                     */
+                    'schedule' => [
+                        'interval'      => 'weekly',
+                        'weekly_anchor' => 'friday',
+                    ],
                 ],
             ],
             'metadata' => [
@@ -88,6 +141,32 @@ final class AccountService
         update_user_meta($user->ID, self::META_STATUS, self::STATUS_IN_PROGRESS);
 
         return $account->id;
+    }
+
+    /**
+     * What this creator sells, and where.
+     *
+     * The creator's own store page is preferred over the marketplace home
+     * page: it is the more truthful answer to "where do you sell?" and gives
+     * Stripe something specific to review. It falls back to the site root for
+     * a creator whose store has no URL yet.
+     *
+     * 5999 is Miscellaneous and Specialty Retail Stores, which covers the
+     * agreed seven categories without claiming to be any one of them.
+     *
+     * @return array{mcc:string, product_description:string, url:string}
+     */
+    private static function businessProfile(WP_User $user): array
+    {
+        $url = function_exists('dokan_get_store_url')
+            ? (string) dokan_get_store_url($user->ID)
+            : '';
+
+        return apply_filters('mk_stripe_business_profile', [
+            'mcc'                 => '5999',
+            'product_description' => 'オンラインマーケットプレイスでのハンドメイド作品・クリエイターグッズの販売',
+            'url'                 => $url !== '' ? $url : home_url('/'),
+        ], $user);
     }
 
     /**
