@@ -841,6 +841,57 @@ if (is_wp_error($msSeller) || is_wp_error($msBuyer) || is_wp_error($msThird)) {
     check('message fixtures removed', !wc_get_order($moId) && !get_userdata($msBuyer));
 }
 
+echo "\n=== フォロー機能 ===\n";
+$fwCreator = wp_insert_user(['user_login' => 'mk_smoke_fw_c_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$fwFan1 = wp_insert_user(['user_login' => 'mk_smoke_fw_1_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+$fwFan2 = wp_insert_user(['user_login' => 'mk_smoke_fw_2_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (is_wp_error($fwCreator) || is_wp_error($fwFan1) || is_wp_error($fwFan2)) {
+    check('create follow fixtures', false, 'user creation failed');
+} else {
+    $svc = new MK\Follow\Service();
+
+    check('starts at zero', $svc->followerCount($fwCreator) === 0);
+    check('follow succeeds', $svc->follow($fwFan1, $fwCreator));
+    check('count is 1', $svc->followerCount($fwCreator) === 1, (string) $svc->followerCount($fwCreator));
+    check('isFollowing true', $svc->isFollowing($fwFan1, $fwCreator));
+
+    // The UNIQUE index is what makes a double-tap harmless.
+    $svc->follow($fwFan1, $fwCreator);
+    $svc->follow($fwFan1, $fwCreator);
+    check('double-tap does not inflate', $svc->followerCount($fwCreator) === 1,
+        (string) $svc->followerCount($fwCreator));
+
+    $svc->follow($fwFan2, $fwCreator);
+    check('second follower counted', $svc->followerCount($fwCreator) === 2);
+
+    check('cannot follow self', !$svc->follow($fwCreator, $fwCreator));
+    check('cannot follow a non-seller', !$svc->follow($fwFan1, $fwFan2));
+    check('cannot follow a ghost', !$svc->follow($fwFan1, 99999999));
+
+    check('following list', $svc->following($fwFan1) === [$fwCreator]);
+    check('followers list has both',
+        count(array_intersect($svc->followers($fwCreator), [$fwFan1, $fwFan2])) === 2);
+
+    $svc->unfollow($fwFan1, $fwCreator);
+    check('unfollow works', !$svc->isFollowing($fwFan1, $fwCreator));
+    check('count drops to 1', $svc->followerCount($fwCreator) === 1);
+
+    // A deleted account must not keep being counted.
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($fwFan2);
+    check('deleted user purged', $svc->followerCount($fwCreator) === 0,
+        (string) $svc->followerCount($fwCreator));
+
+    global $wpdb;
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_follows WHERE creator_id = %d", $fwCreator));
+    wp_delete_user($fwCreator); wp_delete_user($fwFan1);
+    check('follow fixtures removed', !get_userdata($fwCreator));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
