@@ -114,6 +114,7 @@ add_action('plugins_loaded', static function (): void {
     Order\Guard::register();
     Creator\Onboarding::register();
     Product\Statuses::register();
+    Product\PublishGate::register();
     Schedule\Jobs::register();
 
     // The webhook route is only exposed once keys are present. Registering it

@@ -142,7 +142,16 @@ final class AccountService
             $status = self::STATUS_IN_PROGRESS;
         }
 
+        $previous = (string) get_user_meta($userId, self::META_STATUS, true);
+
         update_user_meta($userId, self::META_STATUS, $status);
+
+        // Fired on the edge, not on every sync. account.updated arrives
+        // repeatedly for an already-verified creator, and re-firing would
+        // republish listings the creator had since deliberately unpublished.
+        if ($status === self::STATUS_COMPLETED && $previous !== self::STATUS_COMPLETED) {
+            do_action('mk_creator_onboarding_completed', $userId);
+        }
 
         return $status;
     }

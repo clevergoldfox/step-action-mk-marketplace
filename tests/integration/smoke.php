@@ -260,6 +260,55 @@ foreach (['mk-reserved', 'mk-sold'] as $s) {
     check($s, in_array($s, get_post_stati(), true));
 }
 
+echo "\n=== publish gate (no payout account, no public listing) ===\n";
+$gateUser = wp_insert_user([
+    'user_login' => 'mk_smoke_gate_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($gateUser)) {
+    check('create throwaway creator', false, $gateUser->get_error_message());
+} else {
+    check('creator cannot sell yet', !(new MK\Stripe\AccountService())->canSell($gateUser));
+
+    // A brand-new product has no ID inside wp_insert_post_data, so this also
+    // proves the held-marker survives the case the filter alone cannot see.
+    $held = wp_insert_post([
+        'post_type'   => 'product',
+        'post_status' => 'publish',
+        'post_title'  => 'MK smoke held product',
+        'post_author' => $gateUser,
+    ]);
+
+    check('publish demoted to draft', get_post_status($held) === 'draft', get_post_status($held));
+    check('held marker written', get_post_meta($held, MK\Product\PublishGate::META_HELD, true) === 'yes');
+
+    // Onboarding completes -> everything that was only waiting goes live.
+    update_user_meta($gateUser, MK\Stripe\AccountService::META_STATUS,
+        MK\Stripe\AccountService::STATUS_COMPLETED);
+
+    do_action('mk_creator_onboarding_completed', $gateUser);
+
+    check('released on completion', get_post_status($held) === 'publish', get_post_status($held));
+    check('held marker cleared', get_post_meta($held, MK\Product\PublishGate::META_HELD, true) === '');
+
+    $free = wp_insert_post([
+        'post_type'   => 'product',
+        'post_status' => 'publish',
+        'post_title'  => 'MK smoke free product',
+        'post_author' => $gateUser,
+    ]);
+
+    check('publishes freely once onboarded', get_post_status($free) === 'publish', get_post_status($free));
+
+    wp_delete_post($held, true);
+    wp_delete_post($free, true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($gateUser);
+    check('publish-gate fixtures removed', !get_post($held) && !get_post($free) && !get_userdata($gateUser));
+}
+
 echo "\n=== scheduled actions ===\n";
 check('daily digest', as_has_scheduled_action('mk_send_daily_digest', [], 'mk-marketplace'));
 check('reservation sweeper', as_has_scheduled_action('mk_sweep_reservations', [], 'mk-marketplace'));
