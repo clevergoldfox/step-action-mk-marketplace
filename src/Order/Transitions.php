@@ -31,17 +31,16 @@ final class Transitions
 
     public static function handle(int $orderId, string $from, string $to, WC_Order $order): void
     {
-        // WooCommerce strips the wc- prefix in this hook but our constants
-        // carry it, so normalise both sides rather than comparing mixed forms.
-        $to = self::bare($to);
-
-        match ($to) {
-            self::bare(Statuses::SHIPPED)  => self::onShipped($order),
-            self::bare(Statuses::RECEIVED) => self::onReceived($order),
-            'completed'                    => self::onCompleted($order),
-            'cancelled'                    => self::onCancelled($order),
-            'refunded'                     => self::onRefunded($order),
-            default                        => null,
+        // This hook passes the bare status, which is the form the constants
+        // are already in. Normalising anyway costs nothing and keeps the
+        // match correct if a caller ever passes the wc- spelling through.
+        match (Statuses::bare($to)) {
+            Statuses::SHIPPED  => self::onShipped($order),
+            Statuses::RECEIVED => self::onReceived($order),
+            'completed'        => self::onCompleted($order),
+            'cancelled'        => self::onCancelled($order),
+            'refunded'         => self::onRefunded($order),
+            default            => null,
         };
     }
 
@@ -123,10 +122,5 @@ final class Transitions
             );
             $order->save();
         }
-    }
-
-    private static function bare(string $status): string
-    {
-        return str_starts_with($status, 'wc-') ? substr($status, 3) : $status;
     }
 }

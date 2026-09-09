@@ -176,7 +176,7 @@ final class Jobs
 
         // Only from shipped. A buyer who confirmed early, or a cancellation,
         // has already moved the order on.
-        if ($order->get_status() !== str_replace('wc-', '', Statuses::SHIPPED)) {
+        if ($order->get_status() !== Statuses::SHIPPED) {
             return;
         }
 
@@ -188,7 +188,7 @@ final class Jobs
         }
 
         $order->update_status(
-            str_replace('wc-', '', Statuses::RECEIVED),
+            Statuses::RECEIVED,
             sprintf('発送から%d日が経過したため自動的に受取確認としました。',
                 (int) get_option('mk_auto_complete_days', 7))
         );

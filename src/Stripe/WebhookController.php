@@ -144,7 +144,7 @@ final class WebhookController
         (new PaymentService())->recordCharge($order, $intent->id);
 
         $order->update_status(
-            str_replace('wc-', '', Statuses::PAID),
+            Statuses::PAID,
             '決済が完了しました。'
         );
 
