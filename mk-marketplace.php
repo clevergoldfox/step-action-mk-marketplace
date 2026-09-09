@@ -112,6 +112,8 @@ add_action('plugins_loaded', static function (): void {
     Order\Statuses::register();
     Order\Transitions::register();
     Order\Guard::register();
+    Order\Shipping::register();
+    Order\Receipt::register();
     Creator\Onboarding::register();
     Product\Statuses::register();
     Product\PublishGate::register();

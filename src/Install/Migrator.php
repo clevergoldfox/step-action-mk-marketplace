@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 2;
+    public const SCHEMA_VERSION = 3;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -156,6 +156,7 @@ final class Migrator
         }
 
         self::seedOptions();
+        self::seedCarriers();
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -183,6 +184,55 @@ final class Migrator
         // The creator counter. add_option() is a no-op if it already exists,
         // which is what protects previously issued numbers on reactivation.
         add_option('mk_creator_seq', '0');
+    }
+
+    /**
+     * The carriers a creator can pick from when registering a shipment.
+     *
+     * Seeded only when the table is empty. The operator can add, rename and
+     * deactivate carriers from the admin, and re-running the installer must
+     * not resurrect a carrier they deliberately turned off or overwrite a
+     * name they changed.
+     *
+     * supports_anonymous is 0 across the board: 匿名配送 needs a contract and
+     * an API integration per carrier, and none is in place. The column exists
+     * so that turning one on later is a data change rather than a migration.
+     */
+    private static function seedCarriers(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'mk_carriers';
+
+        if ((int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}") > 0) {
+            return;
+        }
+
+        $carriers = [
+            'ヤマト運輸',
+            '日本郵便',
+            '佐川急便',
+            '西濃運輸',
+            '福山通運',
+            // Kept last and deliberately vague. A creator who used a method
+            // nobody listed still has to be able to register the shipment --
+            // otherwise the order never reaches 発送済, the auto-complete
+            // timer never starts, and they never get paid.
+            'その他',
+        ];
+
+        foreach ($carriers as $i => $name) {
+            $wpdb->insert(
+                $table,
+                [
+                    'name'               => $name,
+                    'sort_order'         => ($i + 1) * 10,
+                    'is_active'          => 1,
+                    'supports_anonymous' => 0,
+                ],
+                ['%s', '%d', '%d', '%d']
+            );
+        }
     }
 
     public static function needsUpgrade(): bool

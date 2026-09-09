@@ -338,6 +338,74 @@ check('all distinct', count(array_unique($got)) === 5);
 update_option('mk_creator_seq', $before);
 check('counter reset', get_option('mk_creator_seq') === $before, 'back to ' . $before);
 
+echo "\n=== carriers ===\n";
+$carriers = MK\Order\Shipping::carriers();
+check('seeded', count($carriers) >= 6, count($carriers) . ' active');
+check('sorted, その他 last',
+    !$carriers || end($carriers)->name === 'その他',
+    implode(' / ', array_map(fn($c) => $c->name, $carriers)));
+
+echo "\n=== transaction lifecycle (paid -> shipped -> received) ===\n";
+$lcSeller = wp_insert_user([
+    'user_login' => 'mk_smoke_lc_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($lcSeller)) {
+    check('create lifecycle seller', false, $lcSeller->get_error_message());
+} else {
+    wp_set_current_user(0);   // act as the system, not the creator
+
+    $lc = wc_create_order();
+    $lc->update_meta_data('_mk_creator_id', $lcSeller);
+    $lc->save();
+    $lcId = $lc->get_id();
+
+    $lc->set_status(MK\Order\Statuses::PAID);
+    $lc->save();
+    check('1. paid', wc_get_order($lcId)->get_status() === MK\Order\Statuses::PAID);
+
+    // Register a shipment the way Shipping::handleSubmit does, using the
+    // tracking-less path -- the one a required field would have broken.
+    $c = $carriers[1] ?? $carriers[0];
+    $lc = wc_get_order($lcId);
+    $lc->update_meta_data(MK\Order\Shipping::META_CARRIER_ID, (int) $c->id);
+    $lc->update_meta_data(MK\Order\Shipping::META_CARRIER_NAME, $c->name);
+    $lc->update_meta_data(MK\Order\Shipping::META_TRACKING, '');
+    $lc->update_meta_data(MK\Order\Shipping::META_NO_TRACKING, 'yes');
+    $lc->update_meta_data(MK\Order\Shipping::META_SHIPPED_AT, gmdate('Y-m-d H:i:s'));
+    $lc->save();
+    $lc->update_status(MK\Order\Statuses::SHIPPED, 'smoke: 発送登録');
+
+    check('2. shipped', wc_get_order($lcId)->get_status() === MK\Order\Statuses::SHIPPED);
+    check('   carrier recorded', wc_get_order($lcId)->get_meta(MK\Order\Shipping::META_CARRIER_NAME) === $c->name, $c->name);
+    check('   no-tracking recorded', wc_get_order($lcId)->get_meta(MK\Order\Shipping::META_NO_TRACKING) === 'yes');
+    check('   auto-complete queued',
+        as_has_scheduled_action('mk_auto_complete_order', ['order_id' => $lcId], 'mk-marketplace'));
+
+    // Buyer confirms receipt.
+    wc_get_order($lcId)->update_status(MK\Order\Statuses::RECEIVED, 'smoke: 受取確認');
+
+    check('3. received', wc_get_order($lcId)->get_status() === MK\Order\Statuses::RECEIVED);
+    check('   auto-complete cancelled',
+        !as_has_scheduled_action('mk_auto_complete_order', ['order_id' => $lcId], 'mk-marketplace'));
+    check('   transfer queued',
+        as_has_scheduled_action('mk_execute_transfer', ['order_id' => $lcId], 'mk-marketplace'));
+    check('   payout not blocked',
+        wc_get_order($lcId)->get_meta(MK\Order\Guard::META_BLOCKED) !== 'yes');
+
+    $due = (string) wc_get_order($lcId)->get_meta('_mk_transfer_due_at');
+    check('   transfer due date set', $due !== '', $due);
+
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $lcId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_auto_complete_order', ['order_id' => $lcId], 'mk-marketplace');
+    wc_get_order($lcId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($lcSeller);
+    check('lifecycle fixtures removed', !wc_get_order($lcId) && !get_userdata($lcSeller));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
