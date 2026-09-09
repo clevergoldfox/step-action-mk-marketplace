@@ -73,17 +73,41 @@ final class Recorder
 
     public function outstanding(int $userId): int
     {
-        return max(0, (int) get_user_meta($userId, self::META_OUTSTANDING, true));
+        global $wpdb;
+
+        return max(0, (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT outstanding FROM {$wpdb->prefix}mk_creator_balances WHERE user_id = %d",
+                $userId
+            )
+        ));
     }
 
     /**
      * Apply a delta to the outstanding balance in a single SQL statement.
      *
-     * Read-modify-write through update_user_meta() would lose an update if a
-     * refund webhook and a scheduled transfer touched the same creator at the
-     * same moment — and a lost debt increment is money the platform silently
-     * never recovers. GREATEST(0, ...) keeps the balance from going negative
-     * if a reversal is somehow applied twice.
+     * Read-modify-write in PHP would lose an update if a refund webhook and a
+     * scheduled transfer touched the same creator at the same moment — and a
+     * lost debt increment is money the platform silently never recovers.
+     * GREATEST(0, ...) keeps the balance from going negative if a reversal is
+     * somehow applied twice.
+     *
+     * ---------------------------------------------------------------------
+     * Why this is not in wp_usermeta
+     * ---------------------------------------------------------------------
+     * It was, and the statement below was written against it unchanged. That
+     * does not work: ON DUPLICATE KEY UPDATE only fires on a UNIQUE or PRIMARY
+     * key, and wp_usermeta has neither on (user_id, meta_key) — both of its
+     * indexes are non-unique. Every call therefore INSERTED another row rather
+     * than updating, get_user_meta() went on returning the first one, and the
+     * balance never moved.
+     *
+     * The visible symptom was a creator's debt being deducted from a payout,
+     * correctly, and then still being outstanding afterwards — so it would
+     * have been deducted again from every future payout, indefinitely.
+     *
+     * mk_creator_balances has user_id as its PRIMARY KEY, which is the
+     * constraint this statement always required.
      */
     private function adjustOutstanding(int $userId, int $delta): int
     {
@@ -91,20 +115,18 @@ final class Recorder
 
         $wpdb->query(
             $wpdb->prepare(
-                "INSERT INTO {$wpdb->usermeta} (user_id, meta_key, meta_value)
-                 VALUES (%d, %s, %d)
+                "INSERT INTO {$wpdb->prefix}mk_creator_balances
+                     (user_id, outstanding, updated_at)
+                 VALUES (%d, %d, %s)
                  ON DUPLICATE KEY UPDATE
-                     meta_value = GREATEST(0, CAST(meta_value AS SIGNED) + %d)",
+                     outstanding = GREATEST(0, outstanding + %d),
+                     updated_at  = VALUES(updated_at)",
                 $userId,
-                self::META_OUTSTANDING,
                 max(0, $delta),
+                current_time('mysql', true),
                 $delta
             )
         );
-
-        // usermeta is cached per-request; without this the next read in the
-        // same request returns the pre-update value.
-        wp_cache_delete($userId, 'user_meta');
 
         return $this->outstanding($userId);
     }

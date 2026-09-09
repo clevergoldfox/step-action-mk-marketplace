@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 5;
+    public const SCHEMA_VERSION = 6;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -138,6 +138,28 @@ final class Migrator
             KEY order_id (order_id)
         ) {$charset};";
 
+        /*
+         * The creator's outstanding balance, with user_id as the PRIMARY KEY.
+         *
+         * This lived in wp_usermeta and was maintained with
+         * INSERT ... ON DUPLICATE KEY UPDATE, which requires a unique index on
+         * the conflicting columns. wp_usermeta has none: its keys on user_id
+         * and meta_key are both non-unique. So the statement never updated
+         * anything -- it inserted a second row every time, get_user_meta()
+         * kept returning the original value, and a debt could be deducted
+         * from every future payout while never being cleared.
+         *
+         * A primary key on user_id is exactly the constraint that statement
+         * always needed, and makes the read-modify-write genuinely atomic in
+         * one round trip.
+         */
+        $tables[] = "CREATE TABLE {$p}mk_creator_balances (
+            user_id BIGINT UNSIGNED NOT NULL,
+            outstanding INT NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (user_id)
+        ) {$charset};";
+
         // Idempotency guard for Stripe webhooks. Stripe retries on any
         // non-2xx and can redeliver even after a success, so every event id is
         // claimed here before it is processed. The UNIQUE index is what makes
@@ -162,6 +184,7 @@ final class Migrator
         self::seedOptions();
         self::seedCarriers();
         self::splitHoldPeriods($from);
+        self::rebuildCreatorBalances($from);
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -195,6 +218,52 @@ final class Migrator
         // The creator counter. add_option() is a no-op if it already exists,
         // which is what protects previously issued numbers on reactivation.
         add_option('mk_creator_seq', '0');
+    }
+
+    /**
+     * Rebuild outstanding balances from the ledger.
+     *
+     * The ledger is append-only and is the authoritative record: every debt
+     * incurred and every recovery is a row. The balance is a cache of it, and
+     * the old cache in wp_usermeta is not merely stale but ambiguous -- the
+     * broken write left duplicate rows per user, so there is no single value
+     * to carry across.
+     *
+     * Deriving it from the ledger repairs whatever the duplicates did, and is
+     * correct regardless of how far the corruption had progressed.
+     */
+    private static function rebuildCreatorBalances(int $from): void
+    {
+        if ($from === 0 || $from >= 6) {
+            return;
+        }
+
+        global $wpdb;
+
+        $rows = $wpdb->get_results(
+            "SELECT user_id,
+                    GREATEST(0, SUM(CASE entry_type
+                        WHEN 'debt_incurred'  THEN amount
+                        WHEN 'debt_recovered' THEN -amount
+                        ELSE 0 END)) AS outstanding
+               FROM {$wpdb->prefix}mk_creator_ledger
+              GROUP BY user_id"
+        );
+
+        foreach ((array) $rows as $row) {
+            $wpdb->replace(
+                $wpdb->prefix . 'mk_creator_balances',
+                [
+                    'user_id'     => (int) $row->user_id,
+                    'outstanding' => (int) $row->outstanding,
+                    'updated_at'  => current_time('mysql', true),
+                ],
+                ['%d', '%d', '%s']
+            );
+        }
+
+        // Remove the duplicated meta rows the broken write left behind.
+        $wpdb->delete($wpdb->usermeta, ['meta_key' => 'mk_unrecovered_amount'], ['%s']);
     }
 
     /**

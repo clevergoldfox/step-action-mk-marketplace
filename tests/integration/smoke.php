@@ -654,6 +654,57 @@ foreach ([
 
 check('Webhook::constructEvent', method_exists('Stripe\Webhook', 'constructEvent'));
 
+echo "\n=== creator balance arithmetic ===\n";
+// This lived in wp_usermeta and was maintained with INSERT ... ON DUPLICATE
+// KEY UPDATE, which only fires on a UNIQUE or PRIMARY key -- and wp_usermeta
+// has neither on (user_id, meta_key). Every write inserted another row, reads
+// kept returning the first, and the balance never moved: a creator's debt was
+// deducted from a payout and remained outstanding, so it would have been
+// deducted again from every future payout.
+$ldgUser = wp_insert_user([
+    'user_login' => 'mk_smoke_ldg_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($ldgUser)) {
+    check('create ledger seller', false, $ldgUser->get_error_message());
+} else {
+    global $wpdb;
+    $ledger = new MK\Ledger\Recorder();
+
+    check('starts at zero', $ledger->outstanding($ldgUser) === 0);
+
+    $ledger->record($ldgUser, null, MK\Ledger\Recorder::DEBT_INCURRED, 500, 500, null, 'smoke');
+    check('debt incurred', $ledger->outstanding($ldgUser) === 500, (string) $ledger->outstanding($ldgUser));
+
+    $ledger->record($ldgUser, null, MK\Ledger\Recorder::DEBT_RECOVERED, 300, -300, null, 'smoke');
+    check('partial recovery reduces it', $ledger->outstanding($ldgUser) === 200,
+        (string) $ledger->outstanding($ldgUser));
+
+    $ledger->record($ldgUser, null, MK\Ledger\Recorder::DEBT_RECOVERED, 900, -900, null, 'smoke');
+    check('never goes negative', $ledger->outstanding($ldgUser) === 0,
+        (string) $ledger->outstanding($ldgUser));
+
+    // The direct guard: one row per creator. Duplicates are what the broken
+    // statement produced, and they are invisible through the accessor.
+    $rows = (int) $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM {$wpdb->prefix}mk_creator_balances WHERE user_id = %d", $ldgUser));
+    check('exactly one balance row', $rows === 1, $rows . ' row(s)');
+
+    // An informational entry must not disturb the balance.
+    $ledger->record($ldgUser, null, MK\Ledger\Recorder::DEBT_INCURRED, 250, 250, null, 'smoke');
+    $ledger->record($ldgUser, null, MK\Ledger\Recorder::TRANSFER, 1000, 0, null, 'smoke');
+    check('transfer entry leaves debt alone', $ledger->outstanding($ldgUser) === 250,
+        (string) $ledger->outstanding($ldgUser));
+
+    $wpdb->delete($wpdb->prefix . 'mk_creator_ledger', ['user_id' => $ldgUser], ['%d']);
+    $wpdb->delete($wpdb->prefix . 'mk_creator_balances', ['user_id' => $ldgUser], ['%d']);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($ldgUser);
+    check('ledger fixtures removed', !get_userdata($ldgUser));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
