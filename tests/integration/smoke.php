@@ -892,6 +892,68 @@ if (is_wp_error($fwCreator) || is_wp_error($fwFan1) || is_wp_error($fwFan2)) {
     check('follow fixtures removed', !get_userdata($fwCreator));
 }
 
+echo "\n=== オプション価格設定 ===\n";
+$opSvc = new MK\Option\Service();
+global $wpdb;
+
+$gid1 = $opSvc->createGroup('スモークテスト：ラッピング', 10);
+$gid2 = $opSvc->createGroup('スモークテスト：メッセージカード', 20);
+check('groups created', $gid1 > 0 && $gid2 > 0, "#$gid1 #$gid2");
+
+$names = array_map(fn($g) => $g->name, $opSvc->activeGroups());
+check('appears in active list', in_array('スモークテスト：ラッピング', $names, true));
+
+$opProd = wp_insert_post(['post_type' => 'product', 'post_status' => 'draft',
+    'post_title' => 'MK smoke option product']);
+
+// The creator prices them; the platform only named them.
+$opSvc->saveForProduct($opProd, [
+    $gid1 => ['offered' => true,  'price' => 500],
+    $gid2 => ['offered' => true,  'price' => 300],
+]);
+$offered = $opSvc->offeredFor($opProd);
+check('two options offered', count($offered) === 2, count($offered) . ' offered');
+
+// Zero-priced options must not reach the buyer: they would show in the list
+// and add nothing to the order.
+$opSvc->saveForProduct($opProd, [$gid2 => ['offered' => true, 'price' => 0]]);
+check('zero price is not offered', count($opSvc->offeredFor($opProd)) === 1,
+    count($opSvc->offeredFor($opProd)) . ' offered');
+
+// Re-saving must update, never accumulate.
+$opSvc->saveForProduct($opProd, [$gid1 => ['offered' => true, 'price' => 800]]);
+$opSvc->saveForProduct($opProd, [$gid1 => ['offered' => true, 'price' => 900]]);
+$rows = (int) $wpdb->get_var($wpdb->prepare(
+    "SELECT COUNT(*) FROM {$wpdb->prefix}mk_product_options WHERE product_id=%d AND option_group_id=%d",
+    $opProd, $gid1));
+check('re-save updates in place', $rows === 1, $rows . ' row(s)');
+check('price updated', (int) $opSvc->offeredFor($opProd)[0]->price === 900);
+
+// A posted id for a group that does not exist must be ignored, not trusted.
+$opSvc->saveForProduct($opProd, [999999 => ['offered' => true, 'price' => 5000]]);
+$bogus = (int) $wpdb->get_var($wpdb->prepare(
+    "SELECT COUNT(*) FROM {$wpdb->prefix}mk_product_options WHERE product_id=%d AND option_group_id=%d",
+    $opProd, 999999));
+check('unknown group ignored', $bogus === 0, $bogus . ' row(s)');
+
+// Options are charged at their own, higher rate.
+$b = MK\Fee\Calculator::fromSettings()->calculate(3000, 900);
+check('option fee rate differs from product',
+    $b->total === 3900 && $b->platformFee === 480 + 360,
+    "total={$b->total} fee={$b->platformFee} creator={$b->creatorAmount}");
+check('halves still sum exactly', $b->platformFee + $b->creatorAmount === $b->total);
+
+// Retiring a group hides it from new listings but keeps old orders legible.
+$opSvc->deactivateGroup($gid1);
+check('retired group not offered', count($opSvc->offeredFor($opProd)) === 0);
+check('retired group still exists',
+    count(array_filter($opSvc->allGroups(), fn($g) => (int) $g->id === $gid1)) === 1);
+
+$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_product_options WHERE product_id=%d", $opProd));
+$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_option_groups WHERE id IN (%d,%d)", $gid1, $gid2));
+wp_delete_post($opProd, true);
+check('option fixtures removed', !get_post($opProd));
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
