@@ -95,6 +95,120 @@ if (is_wp_error($tmp)) {
 
 add_action('woocommerce_order_status_changed', ['MK\Order\Transitions', 'handle'], 10, 4);
 
+echo "\n=== payout authorisation (a creator must not pay themselves) ===\n";
+// Dokan's REST bulk-action endpoint lets a vendor set any status on an order
+// they own, so an order reaching 受取確認 is not by itself evidence that the
+// buyer confirmed anything. The money layer has to refuse regardless of how
+// the status arrived.
+$seller = wp_insert_user([
+    'user_login' => 'mk_smoke_seller_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($seller)) {
+    check('create throwaway seller', false, $seller->get_error_message());
+} else {
+    $wasUser = get_current_user_id();
+
+    // --- the attack: the creator moves their own order to 受取確認 ---
+    $evil = wc_create_order();
+    $evil->update_meta_data('_mk_creator_id', $seller);
+    $evil->save();
+    $evilId = $evil->get_id();
+
+    wp_set_current_user($seller);
+    $evil->set_status(MK\Order\Statuses::RECEIVED);
+    $evil->save();
+
+    $scheduled = as_has_scheduled_action('mk_execute_transfer', ['order_id' => $evilId], 'mk-marketplace');
+    $blocked   = wc_get_order($evilId)->get_meta(MK\Order\Guard::META_BLOCKED) === 'yes';
+
+    check('creator self-release: no transfer queued', !$scheduled,
+        $scheduled ? 'TRANSFER WAS SCHEDULED' : '');
+    check('creator self-release: order flagged', $blocked);
+
+    // --- layer 1: the REST route itself must refuse ---
+    // Dispatched through the real REST server, not by calling the filter, so
+    // this also proves the route pattern actually matches what Dokan
+    // registered rather than what we assumed it registered.
+    wp_set_current_user($seller);
+
+    $rest = wc_create_order();
+    $rest->update_meta_data('_mk_creator_id', $seller);
+    $rest->save();
+    $restId = $rest->get_id();
+
+    // Assert the route exists before asserting it is blocked: rest_pre_dispatch
+    // fires before route resolution, so a 403 on a nonexistent route would
+    // pass while proving nothing. (Dokan registers bulk-actions on v2 and v3
+    // only -- there is no v1 bulk-actions route.)
+    $dokanRoutes = rest_get_server()->get_routes();
+    check('dokan bulk-actions route exists',
+        isset($dokanRoutes['/dokan/v3/orders/bulk-actions']),
+        isset($dokanRoutes['/dokan/v3/orders/bulk-actions']) ? '' : 'route renamed -- guard may be stale');
+
+    $req = new WP_REST_Request('POST', '/dokan/v3/orders/bulk-actions');
+    $req->set_param('status', MK\Order\Statuses::RECEIVED);
+    $req->set_param('order_ids', [$restId]);
+    $res = rest_do_request($req);
+
+    $code = is_array($res->get_data()) ? ($res->get_data()['code'] ?? '') : '';
+    check('REST self-release refused by our guard',
+        $res->get_status() === 403 && $code === 'mk_forbidden_status_change',
+        'HTTP ' . $res->get_status() . ' ' . $code);
+    check('REST self-release: status unchanged',
+        wc_get_order($restId)->get_status() !== MK\Order\Statuses::RECEIVED,
+        wc_get_order($restId)->get_status());
+
+    // the permitted one must still get through the guard
+    $req2 = new WP_REST_Request('POST', '/dokan/v3/orders/bulk-actions');
+    $req2->set_param('status', MK\Order\Statuses::SHIPPED);
+    $req2->set_param('order_ids', [$restId]);
+    $res2 = rest_do_request($req2);
+
+    // Dokan may still refuse this for its own reasons (a bare seller account
+    // is not a configured vendor), which is not our concern. What must be
+    // true is that OUR guard let it through.
+    $code2 = is_array($res2->get_data()) ? ($res2->get_data()['code'] ?? '') : '';
+    check('REST shipped passed our guard', $code2 !== 'mk_forbidden_status_change',
+        'HTTP ' . $res2->get_status() . ' ' . $code2);
+
+    as_unschedule_all_actions('mk_auto_complete_order', ['order_id' => $restId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $restId], 'mk-marketplace');
+    wc_get_order($restId)->delete(true);
+    wp_set_current_user(0);
+
+    // --- the legitimate path: the system releases it ---
+    wp_set_current_user(0);
+    $good = wc_create_order();
+    $good->update_meta_data('_mk_creator_id', $seller);
+    $good->save();
+    $goodId = $good->get_id();
+
+    $good->set_status(MK\Order\Statuses::RECEIVED);
+    $good->save();
+
+    $ok = as_has_scheduled_action('mk_execute_transfer', ['order_id' => $goodId], 'mk-marketplace');
+    check('system release: transfer queued', $ok, $ok ? '' : 'not scheduled');
+
+    check('Guard: creator may set shipped',    MK\Order\Guard::creatorMaySet(MK\Order\Statuses::SHIPPED));
+    check('Guard: creator may NOT set received', !MK\Order\Guard::creatorMaySet(MK\Order\Statuses::RECEIVED));
+    check('Guard: creator may NOT set completed', !MK\Order\Guard::creatorMaySet('completed'));
+
+    // cleanup: queued jobs, orders, user
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $goodId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $evilId], 'mk-marketplace');
+    wc_get_order($evilId)->delete(true);
+    wc_get_order($goodId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($seller);
+    wp_set_current_user($wasUser);
+
+    check('payout-auth fixtures removed',
+        !wc_get_order($evilId) && !wc_get_order($goodId) && !get_userdata($seller));
+}
+
 echo "\n=== product statuses ===\n";
 foreach (['mk-reserved', 'mk-sold'] as $s) {
     check($s, in_array($s, get_post_stati(), true));

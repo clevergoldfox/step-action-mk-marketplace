@@ -66,6 +66,29 @@ final class Transitions
         // useless for spotting real problems.
         Jobs::cancelAutoComplete($order->get_id());
 
+        // The creator must not be able to release their own funds, no matter
+        // which code path set the status. Dokan's REST bulk-action endpoint
+        // lets a vendor set any status on an order they own, and enumerating
+        // upstream routes only protects against the ones that exist today --
+        // so the refusal lives here, at the money, rather than only at the
+        // door. See Guard for the full reasoning.
+        if (!Guard::mayReleaseFunds($order)) {
+            $order->update_meta_data(Guard::META_BLOCKED, 'yes');
+            $order->add_order_note(
+                '⚠️ 出品者自身の操作により受取確認となったため、送金を保留しました。'
+                . '運営が内容を確認してください。'
+            );
+            $order->save();
+
+            error_log(sprintf(
+                '[mk-marketplace] order %d reached received via its own creator (user %d); transfer withheld',
+                $order->get_id(),
+                get_current_user_id()
+            ));
+
+            return;
+        }
+
         Jobs::scheduleTransfer($order->get_id());
 
         $due = (string) $order->get_meta('_mk_transfer_due_at');
