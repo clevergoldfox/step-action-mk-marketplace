@@ -77,7 +77,25 @@ final class Numbering
             );
         }
 
-        return (int) $wpdb->get_var('SELECT LAST_INSERT_ID()');
+        $next = (int) $wpdb->get_var('SELECT LAST_INSERT_ID()');
+
+        // The UPDATE above deliberately bypasses the options API -- only raw
+        // SQL can make the read-modify-write atomic -- but that leaves
+        // WordPress holding a stale cached copy of the option.
+        //
+        // Allocation itself never reads the cache, so numbers are unaffected.
+        // Everything else is: get_option() would report the pre-increment
+        // value, and update_option() would compare against it, decide nothing
+        // changed and skip the write entirely. Under a persistent object cache
+        // (Redis is available on this host) the stale value outlives the
+        // request and every later reader sees it too.
+        //
+        // The option is autoloaded, so it lives inside the alloptions blob as
+        // well as under its own key; both have to go.
+        wp_cache_delete(self::OPTION_SEQ, 'options');
+        wp_cache_delete('alloptions', 'options');
+
+        return $next;
     }
 
     /**
