@@ -780,6 +780,67 @@ if (is_wp_error($rpSeller) || is_wp_error($rpBuyer)) {
     check('report fixtures removed', !wc_get_order($roId) && !get_userdata($rpSeller));
 }
 
+echo "\n=== 取引メッセージ ===\n";
+$msSeller = wp_insert_user(['user_login' => 'mk_smoke_ms_s_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$msBuyer  = wp_insert_user(['user_login' => 'mk_smoke_ms_b_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+$msThird  = wp_insert_user(['user_login' => 'mk_smoke_ms_x_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (is_wp_error($msSeller) || is_wp_error($msBuyer) || is_wp_error($msThird)) {
+    check('create message fixtures', false, 'user creation failed');
+} else {
+    $svc = new MK\Message\Service();
+
+    $mo = wc_create_order(['customer_id' => $msBuyer, 'status' => 'pending']);
+    $mo->update_meta_data('_mk_creator_id', $msSeller);
+    $mo->save();
+    $moId = $mo->get_id();
+
+    $id1 = $svc->send($moId, $msBuyer, '発送はいつ頃になりますか？');
+    check('buyer can send', $id1 > 0);
+    $id2 = $svc->send($moId, $msSeller, '本日発送いたします。');
+    check('creator can reply', $id2 > 0);
+
+    $thread = $svc->forOrder($moId);
+    check('thread has both', count($thread) === 2, count($thread) . ' message(s)');
+    check('oldest first', (int) $thread[0]->id === $id1);
+    check('receiver resolved',
+        (int) $thread[0]->receiver_id === $msSeller && (int) $thread[1]->receiver_id === $msBuyer);
+
+    // A stranger must not be able to post into someone else's transaction.
+    check('outsider refused', (function () use ($svc, $moId, $msThird) {
+        try { $svc->send($moId, $msThird, 'hello'); return false; }
+        catch (Throwable $e) { return true; }
+    })());
+    check('outsider has no counterparty',
+        $svc->counterpartyOf(wc_get_order($moId), $msThird) === null);
+    check('empty body refused', (function () use ($svc, $moId, $msBuyer) {
+        try { $svc->send($moId, $msBuyer, '   '); return false; }
+        catch (Throwable $e) { return true; }
+    })());
+
+    check('seller has 1 unread', $svc->unreadCount($msSeller) === 1, (string) $svc->unreadCount($msSeller));
+    $svc->markRead($moId, $msSeller);
+    check('read clears it', $svc->unreadCount($msSeller) === 0);
+    check('other side unaffected', $svc->unreadCount($msBuyer) === 1, (string) $svc->unreadCount($msBuyer));
+
+    $long = str_repeat('あ', MK\Message\Service::MAX_LENGTH + 500);
+    $svc->send($moId, $msBuyer, $long);
+    $last = end($svc->forOrder($moId));
+    check('over-long body truncated',
+        mb_strlen((string) $last->body) === MK\Message\Service::MAX_LENGTH,
+        mb_strlen((string) $last->body) . ' chars');
+
+    global $wpdb;
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_messages WHERE order_id = %d", $moId));
+    wc_get_order($moId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($msSeller); wp_delete_user($msBuyer); wp_delete_user($msThird);
+    check('message fixtures removed', !wc_get_order($moId) && !get_userdata($msBuyer));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
