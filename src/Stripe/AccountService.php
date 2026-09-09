@@ -56,6 +56,9 @@ final class AccountService
     public const META_ACCOUNT_ID = 'mk_stripe_account_id';
     public const META_STATUS     = 'mk_onboarding_status';
 
+    /** Whether Stripe will pay this creator's balance on to their bank. */
+    public const META_PAYOUTS_ENABLED = 'mk_stripe_payouts_enabled';
+
     public const STATUS_NOT_STARTED = 'not_started';
     public const STATUS_IN_PROGRESS = 'in_progress';
     public const STATUS_COMPLETED   = 'completed';
@@ -215,13 +218,46 @@ final class AccountService
         $dueNow    = $account->requirements->currently_due ?? [];
         $disabled  = $account->requirements->disabled_reason ?? null;
 
-        if ($transfers === 'active' && $account->payouts_enabled) {
+        /*
+         * Completion is judged on `transfers`, not on `payouts_enabled`.
+         *
+         * These answer different questions, and only the first is ours:
+         *
+         *   capabilities.transfers  can the PLATFORM send this creator money?
+         *   payouts_enabled         can STRIPE send it on to their bank?
+         *
+         * Gating on payouts_enabled looked stricter and safer, and was simply
+         * wrong. A fully verified test creator -- ToS accepted, bank attached
+         * and default, currently_due empty, transfers active -- still reported
+         * payouts_enabled=false with disabled_reason "other", which left them
+         * permanently stuck on 確認中 with nothing to act on. A creator cannot
+         * fix "other", and there was nothing to fix.
+         *
+         * Attempting a real transfer to that account settles it: Stripe
+         * answers "insufficient available funds" on the PLATFORM balance, not
+         * "this account cannot receive transfers". The creator is payable.
+         *
+         * The distinction also matters beyond this case. Our obligation is to
+         * route the sale proceeds to the creator, and transfers=active is
+         * exactly that. Money in their Stripe balance is theirs, and a payout
+         * hold is between them and Stripe -- worth warning about, but not a
+         * reason to stop them selling.
+         */
+        if ($transfers === 'active' && empty($dueNow)) {
             $status = self::STATUS_COMPLETED;
-        } elseif ($disabled !== null && !empty($dueNow)) {
+        } elseif (!empty($dueNow) && $disabled !== null) {
             $status = self::STATUS_RESTRICTED;
         } else {
             $status = self::STATUS_IN_PROGRESS;
         }
+
+        // Recorded rather than acted on, so the payouts page can warn a
+        // creator whose money would reach Stripe but not their bank.
+        update_user_meta(
+            $userId,
+            self::META_PAYOUTS_ENABLED,
+            $account->payouts_enabled ? 'yes' : 'no'
+        );
 
         $previous = (string) get_user_meta($userId, self::META_STATUS, true);
 

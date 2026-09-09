@@ -200,7 +200,8 @@ final class Onboarding
             self::ensureNumber($userId),
             $status !== '' ? $status : AccountService::STATUS_NOT_STARTED,
             $accounts->canSell($userId),
-            isset($_GET['mk_error'])
+            isset($_GET['mk_error']),
+            get_user_meta($userId, AccountService::META_PAYOUTS_ENABLED, true) === 'no'
         );
     }
 
@@ -208,7 +209,8 @@ final class Onboarding
         string $number,
         string $status,
         bool $canSell,
-        bool $showError
+        bool $showError,
+        bool $payoutsHeld = false
     ): void {
         [$label, $tone, $help] = match ($status) {
             AccountService::STATUS_COMPLETED => [
@@ -244,7 +246,12 @@ final class Onboarding
             default                            => '設定を続ける',
         };
 
-        echo '<div class="dokan-dashboard-content mk-payouts"><article>';
+        // No dokan-dashboard-content wrapper here. Dokan's dashboard template
+        // already opens one before dokan_load_custom_template fires, and
+        // nesting a second copy inherits its absolute positioning twice --
+        // which shifted the whole panel left, under the sidebar, clipping the
+        // first few characters of every line.
+        echo '<article class="mk-payouts">';
         echo '<header class="dokan-dashboard-header"><h1 class="entry-title">売上受取設定</h1></header>';
 
         if ($showError) {
@@ -271,6 +278,17 @@ final class Onboarding
         if (!$canSell) {
             echo '<div class="dokan-alert dokan-alert-warning">'
                 . '受取設定が完了するまで、商品は公開されません。'
+                . '</div>';
+        }
+
+        // Selling is allowed -- we can transfer to them -- but Stripe is not
+        // paying their balance on to their bank. Say so rather than let money
+        // quietly accumulate somewhere they cannot reach.
+        if ($payoutsHeld && $canSell) {
+            echo '<div class="dokan-alert dokan-alert-warning">'
+                . '売上のお受け取り自体は可能ですが、Stripe からご登録口座への'
+                . '入金が一時的に保留されています。出品・販売には影響ありません。'
+                . '解除されない場合は運営までお問い合わせください。'
                 . '</div>';
         }
 
