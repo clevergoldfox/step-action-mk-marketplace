@@ -192,6 +192,36 @@ final class TransferService
     }
 
     /**
+     * Absorb a chargeback. Like a refund, but without refunding.
+     *
+     * A disputed charge cannot be refunded -- Stripe rejects it outright with
+     * "has been charged back; cannot issue a refund", because the card network
+     * has already taken the money back. refundAndReverse() therefore throws on
+     * every dispute, which left chargebacks with no working unwind path at all
+     * despite being the exact case this design exists to survive.
+     *
+     * So the money movement here is only ever inward: pull back the transfer
+     * if one went out, and record what the platform is left holding the bill
+     * for.
+     *
+     * $disputeFee is Stripe's ¥1,500, charged to the creator per the terms the
+     * client agreed. Note what is NOT charged to them: the platform's own
+     * commission on the lost sale. The creator is billed for the money they
+     * would have received and for the fee their transaction caused, and the
+     * platform absorbs its own margin rather than profiting from a chargeback.
+     * That is a policy choice and the operator may want a different one.
+     */
+    public function absorbDispute(WC_Order $order, int $disputeFee = 1500): void
+    {
+        $reversed = $this->pullBackTransfer($order);
+
+        $this->recordUnwind($order, $reversed, null, $disputeFee);
+
+        $order->update_meta_data('_mk_has_open_report', 'yes');
+        $order->save();
+    }
+
+    /**
      * Claw the transfer back, and report how much actually came back.
      *
      * A reversal draws on the connected account's balance, and that balance
