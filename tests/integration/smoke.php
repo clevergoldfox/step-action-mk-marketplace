@@ -406,6 +406,56 @@ if (is_wp_error($lcSeller)) {
     check('lifecycle fixtures removed', !wc_get_order($lcId) && !get_userdata($lcSeller));
 }
 
+echo "\n=== payout hold tiers (client option C) ===\n";
+check('standard = 7',    (int) get_option('mk_payout_hold_days') === 7,      (string) get_option('mk_payout_hold_days'));
+check('new creator = 10', (int) get_option('mk_payout_hold_days_new') === 10,  (string) get_option('mk_payout_hold_days_new'));
+check('high value = 14',  (int) get_option('mk_payout_hold_days_high') === 14, (string) get_option('mk_payout_hold_days_high'));
+
+$tierSeller = wp_insert_user([
+    'user_login' => 'mk_smoke_tier_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($tierSeller)) {
+    check('create tier seller', false, $tierSeller->get_error_message());
+} else {
+    wp_set_current_user(0);
+
+    // holdDaysFor() is private, so drive it the way production does: schedule
+    // the transfer and read back the hold it recorded on the order.
+    $tierOf = function (int $sales, int $amount) use ($tierSeller): int {
+        update_user_meta($tierSeller, 'mk_completed_sales_count', $sales);
+
+        $o = wc_create_order();
+        $o->update_meta_data('_mk_creator_id', $tierSeller);
+        $o->update_meta_data('_mk_product_amount', $amount);
+        $o->update_meta_data('_mk_option_amount', 0);
+        $o->save();
+
+        MK\Schedule\Jobs::scheduleTransfer($o->get_id());
+
+        $days = (int) wc_get_order($o->get_id())->get_meta('_mk_payout_hold_days');
+
+        as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $o->get_id()], 'mk-marketplace');
+        wc_get_order($o->get_id())->delete(true);
+
+        return $days;
+    };
+
+    check('established + small -> 7',  $tierOf(10, 10000) === 7,  $tierOf(10, 10000) . ' days');
+    check('new + small        -> 10', $tierOf(0, 10000) === 10, $tierOf(0, 10000) . ' days');
+    check('established + large -> 14', $tierOf(10, 80000) === 14, $tierOf(10, 80000) . ' days');
+    // The riskiest combination. Taking the first matching rule rather than the
+    // longest would have returned 10 here -- shorter than the large-order rule
+    // alone gives, for an order that is both large AND from an unknown seller.
+    check('new + large        -> 14', $tierOf(0, 80000) === 14, $tierOf(0, 80000) . ' days');
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($tierSeller);
+    check('tier fixtures removed', !get_userdata($tierSeller));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 

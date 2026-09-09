@@ -15,13 +15,17 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 3;
+    public const SCHEMA_VERSION = 4;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
     public static function run(): void
     {
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+        // Captured before seeding, so a data migration can tell a fresh
+        // install from an upgrade and act only on the latter.
+        $from = (int) get_option(self::OPTION_VERSION, 0);
 
         global $wpdb;
         $charset = $wpdb->get_charset_collate();
@@ -157,6 +161,7 @@ final class Migrator
 
         self::seedOptions();
         self::seedCarriers();
+        self::splitHoldPeriods($from);
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -170,8 +175,14 @@ final class Migrator
             'mk_fee_rate'              => 0.16,
             'mk_option_fee_rate'       => 0.40,
             'mk_auto_complete_days'    => 7,
+            // Three tiers, agreed with the client. A new creator waits longer
+            // than an established one because a first-sale runner is the
+            // cheapest fraud to commit; a large order waits longest because
+            // it is the one worth committing it for. These were a single
+            // setting until the client chose to separate them.
             'mk_payout_hold_days'      => 7,
-            'mk_payout_hold_days_new'  => 14,
+            'mk_payout_hold_days_new'  => 10,
+            'mk_payout_hold_days_high' => 14,
             'mk_new_creator_threshold' => 3,
             'mk_high_value_threshold'  => 50_000,
             'mk_shipping_mask_days'    => 30,
@@ -184,6 +195,34 @@ final class Migrator
         // The creator counter. add_option() is a no-op if it already exists,
         // which is what protects previously issued numbers on reactivation.
         add_option('mk_creator_seq', '0');
+    }
+
+    /**
+     * Separate the new-creator hold from the high-value hold.
+     *
+     * One option, mk_payout_hold_days_new, used to drive both conditions, so
+     * they could not differ. The client has since chosen 10 days for a new
+     * creator and 14 for a large order, which needs two settings.
+     *
+     * seedOptions() gives a fresh install the right values, and add_option()
+     * is a no-op on an existing one -- which is exactly the problem here,
+     * because that leaves an upgraded site holding the old shared 14.
+     *
+     * Only a value still sitting at that old default is retuned. If the
+     * operator has already chosen something else, their number is theirs and
+     * an installer must not quietly overwrite a payout policy someone set on
+     * purpose.
+     */
+    private static function splitHoldPeriods(int $from): void
+    {
+        // 0 is a fresh install: seedOptions() has just written 10 and 14.
+        if ($from === 0 || $from >= 4) {
+            return;
+        }
+
+        if ((int) get_option('mk_payout_hold_days_new') === 14) {
+            update_option('mk_payout_hold_days_new', 10);
+        }
     }
 
     /**

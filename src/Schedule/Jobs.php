@@ -100,15 +100,23 @@ final class Jobs
      * How long to hold this creator's money.
      *
      * Longer for the cases where a loss is least recoverable: a creator with
-     * no track record who could take one large payout and never return, and
-     * any single order big enough to hurt. Everyone else gets the standard
-     * hold, because a creator with a history is the one you least want to
-     * inconvenience.
+     * no track record who could take one payout and never return, and any
+     * single order big enough to be worth doing that for. Everyone else gets
+     * the standard hold, because a creator with a history is the one you least
+     * want to inconvenience.
+     *
+     * The two risks were one setting until the client chose to price them
+     * separately -- 10 days for a new creator, 14 for a large order -- on the
+     * grounds that the money at stake, not the newness, is what justifies the
+     * longest wait.
+     *
+     * They are not mutually exclusive, so the longest applicable hold wins
+     * rather than the first one matched. A new creator's first sale being a
+     * large one is the single riskiest combination in the system, and it must
+     * not come out shorter than either rule alone would give it.
      */
     private static function holdDaysFor(WC_Order $order): int
     {
-        $standard  = (int) get_option('mk_payout_hold_days', 7);
-        $extended  = (int) get_option('mk_payout_hold_days_new', 14);
         $threshold = (int) get_option('mk_new_creator_threshold', 3);
         $highValue = (int) get_option('mk_high_value_threshold', 50_000);
 
@@ -117,11 +125,17 @@ final class Jobs
         $total     = (int) $order->get_meta('_mk_product_amount')
                    + (int) $order->get_meta('_mk_option_amount');
 
-        if ($sales < $threshold || $total > $highValue) {
-            return $extended;
+        $days = (int) get_option('mk_payout_hold_days', 7);
+
+        if ($sales < $threshold) {
+            $days = max($days, (int) get_option('mk_payout_hold_days_new', 10));
         }
 
-        return $standard;
+        if ($total > $highValue) {
+            $days = max($days, (int) get_option('mk_payout_hold_days_high', 14));
+        }
+
+        return $days;
     }
 
     /** Hide the buyer's address from the creator once the sale is history. */

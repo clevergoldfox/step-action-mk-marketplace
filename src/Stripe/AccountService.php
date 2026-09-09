@@ -118,12 +118,14 @@ final class AccountService
                      * our own hold, then 4-10 days for Stripe (funds season
                      * for 4 days, then leave on the first Friday after that).
                      *
-                     *   standard  (7-day hold)   11-17 days
-                     *   extended (14-day hold)   18-24 days
+                     *   standard     ( 7-day hold)   11-17 days
+                     *   new creator  (10-day hold)   14-20 days
+                     *   high value   (14-day hold)   18-24 days
                      *
-                     * Both hold periods are admin-editable options
-                     * (mk_payout_hold_days, mk_payout_hold_days_new), so the
-                     * operator can retune this without a code change.
+                     * All three hold periods are admin-editable options
+                     * (mk_payout_hold_days, mk_payout_hold_days_new,
+                     * mk_payout_hold_days_high), so the operator can retune
+                     * this without a code change.
                      */
                     'schedule' => [
                         'interval'      => 'weekly',
