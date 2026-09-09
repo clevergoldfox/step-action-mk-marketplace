@@ -27,6 +27,9 @@ final class Jobs
     public const DAILY_DIGEST   = 'mk_send_daily_digest';
     public const SWEEP_RESERVATIONS = 'mk_sweep_reservations';
 
+    /** Guards the completed-sales counter against a job retry. */
+    public const META_SALE_COUNTED = '_mk_sale_counted';
+
     private const GROUP = 'mk-marketplace';
 
     public static function register(): void
@@ -222,10 +225,49 @@ final class Jobs
         // who never gets paid and nobody finding out.
         (new TransferService())->execute($order);
 
-        $creatorId = (int) $order->get_meta('_mk_creator_id');
-        $count     = (int) get_user_meta($creatorId, 'mk_completed_sales_count', true);
+        // Reload: execute() writes its own meta and saved the order.
+        $order = wc_get_order($orderId);
 
-        update_user_meta($creatorId, 'mk_completed_sales_count', $count + 1);
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+
+        // Withheld pending a report. The order stays at 受取確認 until an
+        // operator resolves it, which is the whole point of withholding.
+        if ($order->get_meta(TransferService::META_STATUS) === TransferService::STATUS_SKIPPED) {
+            return;
+        }
+
+        // Counted once, on the order, not by re-deriving it. Action Scheduler
+        // retries a job whose later steps failed, and execute() is idempotent
+        // -- so without this a retry would re-count the sale and could push a
+        // creator over the "established" threshold on a single transaction.
+        if ($order->get_meta(self::META_SALE_COUNTED) !== 'yes') {
+            $creatorId = (int) $order->get_meta('_mk_creator_id');
+            $count     = (int) get_user_meta($creatorId, 'mk_completed_sales_count', true);
+
+            update_user_meta($creatorId, 'mk_completed_sales_count', $count + 1);
+
+            $order->update_meta_data(self::META_SALE_COUNTED, 'yes');
+            $order->save();
+        }
+
+        /*
+         * Close the transaction.
+         *
+         * The state machine documents "received -> completed: transfer
+         * executed", and nothing performed that edge. The order sat at 受取確認
+         * forever, which looked merely untidy and was not: onCompleted() is
+         * what schedules the buyer's address to be masked, so the privacy
+         * measure promised to the client silently never ran, and the creator
+         * kept the buyer's address indefinitely.
+         *
+         * Found by running one real transaction end to end. Every individual
+         * piece had passed its own test.
+         */
+        if ($order->get_status() !== 'completed') {
+            $order->update_status('completed', 'クリエイターへの送金が完了しました。');
+        }
     }
 
     /**

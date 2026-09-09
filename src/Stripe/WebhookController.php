@@ -69,11 +69,36 @@ final class WebhookController
                 $signature,
                 Client::webhookSecret()
             );
-        } catch (SignatureVerificationException) {
-            // Do not echo any detail. An attacker probing the endpoint learns
-            // nothing beyond "rejected".
+        } catch (SignatureVerificationException $e) {
+            /*
+             * Say nothing in the RESPONSE, but always log it.
+             *
+             * The response stays bare so an attacker probing the endpoint
+             * learns nothing beyond "rejected". Logging nothing at all was a
+             * different mistake, and an expensive one: a wrong signing secret
+             * in wp-config produced exactly this path, and it was silent on
+             * both sides. Stripe reported the delivery as failed in a
+             * dashboard nobody was watching, our webhook table stayed empty
+             * because rejection happens before the event is claimed, and a
+             * genuinely paid order simply sat at 決済待ち. Nothing anywhere
+             * said "the secret is wrong".
+             *
+             * The count of recent failures is what distinguishes the two
+             * causes: a handful is someone probing, a continuous stream that
+             * began when the endpoint was configured is a secret mismatch.
+             */
+            error_log(sprintf(
+                '[mk-marketplace] webhook signature rejected from %s: %s '
+                . '(if this repeats for every delivery, MK_STRIPE_WEBHOOK_SECRET '
+                . 'does not match the signing secret of the Stripe destination)',
+                $request->get_header('x_forwarded_for') ?: 'unknown',
+                $e->getMessage()
+            ));
+
             return new WP_REST_Response(['error' => 'invalid signature'], 400);
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            error_log('[mk-marketplace] webhook payload rejected: ' . $e->getMessage());
+
             return new WP_REST_Response(['error' => 'malformed payload'], 400);
         }
 

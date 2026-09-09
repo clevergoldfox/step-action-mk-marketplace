@@ -564,6 +564,70 @@ if (is_wp_error($rndSeller)) {
     check('render fixtures removed', !get_userdata($rndSeller) && !get_userdata($cust));
 }
 
+echo "\n=== transfer completes the order (no Stripe call) ===\n";
+// execute() returns early when a transfer id is already present, so the
+// completion and counting logic can be exercised without moving real money.
+$cmpSeller = wp_insert_user([
+    'user_login' => 'mk_smoke_cmp_' . wp_rand(1000, 9999),
+    'user_pass'  => wp_generate_password(24),
+    'role'       => 'seller',
+]);
+
+if (is_wp_error($cmpSeller)) {
+    check('create completion seller', false, $cmpSeller->get_error_message());
+} else {
+    wp_set_current_user(0);
+
+    $co = wc_create_order();
+    $co->update_meta_data('_mk_creator_id', $cmpSeller);
+    $co->update_meta_data(MK\Stripe\TransferService::META_TRANSFER_ID, 'tr_smoke_fake');
+    $co->update_meta_data(MK\Stripe\TransferService::META_STATUS, MK\Stripe\TransferService::STATUS_SENT);
+    $co->save();
+    $coId = $co->get_id();
+    $co->update_status(MK\Order\Statuses::RECEIVED, 'smoke: 受取確認');
+
+    MK\Schedule\Jobs::runTransfer($coId);
+
+    check('order completed', wc_get_order($coId)->get_status() === 'completed',
+        wc_get_order($coId)->get_status());
+    check('sale counted once',
+        (int) get_user_meta($cmpSeller, 'mk_completed_sales_count', true) === 1,
+        (string) get_user_meta($cmpSeller, 'mk_completed_sales_count', true));
+    // onCompleted schedules this; if the order never completes, the buyer's
+    // address is never masked and the creator keeps it indefinitely.
+    check('address masking queued',
+        as_has_scheduled_action('mk_mask_shipping_address', ['order_id' => $coId], 'mk-marketplace'));
+
+    // Action Scheduler retries jobs whose later steps failed.
+    MK\Schedule\Jobs::runTransfer($coId);
+    MK\Schedule\Jobs::runTransfer($coId);
+    check('retries do not re-count',
+        (int) get_user_meta($cmpSeller, 'mk_completed_sales_count', true) === 1,
+        (string) get_user_meta($cmpSeller, 'mk_completed_sales_count', true));
+
+    // A withheld transfer must NOT complete the order.
+    $wo = wc_create_order();
+    $wo->update_meta_data('_mk_creator_id', $cmpSeller);
+    $wo->update_meta_data('_mk_has_open_report', 'yes');
+    $wo->save();
+    $woId = $wo->get_id();
+    $wo->update_status(MK\Order\Statuses::RECEIVED, 'smoke: 通報あり');
+    MK\Schedule\Jobs::runTransfer($woId);
+
+    check('withheld order stays open',
+        wc_get_order($woId)->get_status() !== 'completed',
+        wc_get_order($woId)->get_status());
+
+    as_unschedule_all_actions('mk_mask_shipping_address', ['order_id' => $coId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $coId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $woId], 'mk-marketplace');
+    wc_get_order($coId)->delete(true);
+    wc_get_order($woId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($cmpSeller);
+    check('completion fixtures removed', !wc_get_order($coId) && !get_userdata($cmpSeller));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
