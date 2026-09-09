@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 1;
+    public const SCHEMA_VERSION = 2;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -132,6 +132,23 @@ final class Migrator
             PRIMARY KEY (id),
             KEY user_created (user_id, created_at),
             KEY order_id (order_id)
+        ) {$charset};";
+
+        // Idempotency guard for Stripe webhooks. Stripe retries on any
+        // non-2xx and can redeliver even after a success, so every event id is
+        // claimed here before it is processed. The UNIQUE index is what makes
+        // the claim atomic: two concurrent deliveries race on the INSERT and
+        // exactly one wins. Without it, a redelivered payment_intent.succeeded
+        // would mark a second product sold, and a redelivered refund would
+        // reverse a transfer twice.
+        $tables[] = "CREATE TABLE {$p}mk_webhook_events (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            event_id VARCHAR(80) NOT NULL,
+            event_type VARCHAR(60) NOT NULL,
+            received_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY event_id (event_id),
+            KEY received_at (received_at)
         ) {$charset};";
 
         foreach ($tables as $sql) {

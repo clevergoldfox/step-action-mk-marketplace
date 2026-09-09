@@ -85,6 +85,14 @@ add_action('plugins_loaded', static function (): void {
     }
 
     Order\Statuses::register();
+    Schedule\Jobs::register();
+
+    // The webhook route is only exposed once keys are present. Registering it
+    // without a signing secret would create an endpoint that rejects
+    // everything, including legitimate Stripe deliveries, while looking live.
+    if (class_exists(\Stripe\Webhook::class) && Stripe\Client::isConfigured()) {
+        Stripe\WebhookController::register();
+    }
 }, 20);
 
 /**
