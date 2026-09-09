@@ -705,6 +705,81 @@ if (is_wp_error($ldgUser)) {
     check('ledger fixtures removed', !get_userdata($ldgUser));
 }
 
+echo "\n=== 通報 stops the money, resolving restarts it ===\n";
+$rpSeller = wp_insert_user(['user_login' => 'mk_smoke_rp_s_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$rpBuyer  = wp_insert_user(['user_login' => 'mk_smoke_rp_b_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (is_wp_error($rpSeller) || is_wp_error($rpBuyer)) {
+    check('create report fixtures', false, 'user creation failed');
+} else {
+    wp_set_current_user(0);
+    $svc = new MK\Report\Service();
+
+    $ro = wc_create_order(['customer_id' => $rpBuyer, 'status' => 'pending']);
+    $ro->update_meta_data('_mk_creator_id', $rpSeller);
+    $ro->update_meta_data('_mk_product_amount', 3000);
+    $ro->update_meta_data('_mk_option_amount', 0);
+    $ro->save();
+    $roId = $ro->get_id();
+
+    $ro->update_status(MK\Order\Statuses::RECEIVED, 'smoke');
+    check('transfer queued before report',
+        as_has_scheduled_action('mk_execute_transfer', ['order_id' => $roId], 'mk-marketplace'));
+
+    $rid = $svc->open($rpBuyer, MK\Report\Service::TARGET_ORDER, $roId, 'not_arrived', '届きません');
+    check('report created', $rid > 0, 'id ' . $rid);
+    check('order flagged',
+        wc_get_order($roId)->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
+    // The whole point: money must stop.
+    check('transfer cancelled',
+        !as_has_scheduled_action('mk_execute_transfer', ['order_id' => $roId], 'mk-marketplace'));
+    check('auto-complete cancelled',
+        !as_has_scheduled_action('mk_auto_complete_order', ['order_id' => $roId], 'mk-marketplace'));
+
+    // Even forced, the payout must refuse while a report is open.
+    MK\Schedule\Jobs::runTransfer($roId);
+    check('forced payout refused',
+        wc_get_order($roId)->get_meta(MK\Stripe\TransferService::META_TRANSFER_ID) === '',
+        wc_get_order($roId)->get_meta(MK\Stripe\TransferService::META_TRANSFER_ID) ?: 'not paid');
+
+    check('duplicate report blocked',
+        $svc->alreadyReported($rpBuyer, MK\Report\Service::TARGET_ORDER, $roId));
+
+    // A second, unrelated report on the same order.
+    $rid2 = $svc->open($rpSeller, MK\Report\Service::TARGET_ORDER, $roId, 'nuisance', '');
+    $svc->resolve($rid, 1, '確認済み', true);
+    check('hold survives while another is open',
+        wc_get_order($roId)->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
+
+    $svc->resolve($rid2, 1, '解決', true);
+    check('hold lifts on the last one',
+        wc_get_order($roId)->get_meta(MK\Report\Service::ORDER_FLAG) === 'no',
+        wc_get_order($roId)->get_meta(MK\Report\Service::ORDER_FLAG));
+    check('transfer re-queued',
+        as_has_scheduled_action('mk_execute_transfer', ['order_id' => $roId], 'mk-marketplace'));
+
+    // Resolving without release must leave the money frozen.
+    $rid3 = $svc->open($rpBuyer, MK\Report\Service::TARGET_ORDER, $roId, 'damaged', '');
+    $svc->resolve($rid3, 1, '返金対応', false);
+    check('no-release keeps it frozen',
+        !as_has_scheduled_action('mk_execute_transfer', ['order_id' => $roId], 'mk-marketplace'));
+
+    check('invalid reason rejected', (function () use ($svc, $rpBuyer, $roId) {
+        try { $svc->open($rpBuyer, MK\Report\Service::TARGET_ORDER, $roId, 'nonsense', ''); return false; }
+        catch (Throwable $e) { return true; }
+    })());
+
+    global $wpdb;
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $roId], 'mk-marketplace');
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_reports WHERE target_id = %d", $roId));
+    wc_get_order($roId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($rpSeller); wp_delete_user($rpBuyer);
+    check('report fixtures removed', !wc_get_order($roId) && !get_userdata($rpSeller));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
