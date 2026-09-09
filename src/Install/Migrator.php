@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 4;
+    public const SCHEMA_VERSION = 5;
 
     private const OPTION_VERSION = 'mk_schema_version';
 

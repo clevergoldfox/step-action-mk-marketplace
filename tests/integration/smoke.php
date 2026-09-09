@@ -456,6 +456,54 @@ if (is_wp_error($tierSeller)) {
     check('tier fixtures removed', !get_userdata($tierSeller));
 }
 
+echo "\n=== checkout ===\n";
+check('shortcode registered', shortcode_exists('mk_checkout'));
+
+$coPage = (int) get_option(MK\Checkout\Controller::PAGE_OPTION);
+$coPost = $coPage > 0 ? get_post($coPage) : null;
+check('checkout page exists', $coPost && $coPost->post_status === 'publish',
+    $coPost ? get_permalink($coPage) : 'missing');
+check('page contains shortcode', $coPost && str_contains($coPost->post_content, '[mk_checkout]'));
+check('checkoutUrl resolves', str_starts_with(MK\Checkout\Controller::checkoutUrl(), 'https://'),
+    MK\Checkout\Controller::checkoutUrl());
+
+// The page can be trashed by an admin tidying up; the buy button would then
+// point nowhere. Re-running the installer must bring it back.
+if ($coPost) {
+    wp_trash_post($coPage);
+    MK\Checkout\Controller::ensurePage();
+    $healed = (int) get_option(MK\Checkout\Controller::PAGE_OPTION);
+    $healedPost = $healed > 0 ? get_post($healed) : null;
+    check('trashed page is recreated',
+        $healedPost && $healedPost->post_status === 'publish' && $healed !== $coPage,
+        $healedPost ? 'new id ' . $healed : 'not recreated');
+
+    // Put it back exactly as it was. Without this the test leaks a page every
+    // run, and each new one takes a suffixed slug (mk-checkout-2, -3, ...)
+    // because the original still holds the good one.
+    if ($healed !== $coPage) {
+        wp_delete_post($healed, true);
+    }
+
+    wp_untrash_post($coPage);
+    wp_update_post(['ID' => $coPage, 'post_status' => 'publish']);
+    update_option(MK\Checkout\Controller::PAGE_OPTION, $coPage);
+
+    check('checkout page restored',
+        get_post_status($coPage) === 'publish'
+            && (int) get_option(MK\Checkout\Controller::PAGE_OPTION) === $coPage,
+        'id ' . $coPage . ' ' . get_permalink($coPage));
+}
+
+// The add-to-cart button must be gone: two routes to buying one unique item
+// is two ways to reserve it.
+do_action('wp');
+check('add-to-cart replaced',
+    has_action('woocommerce_single_product_summary', 'woocommerce_template_single_add_to_cart') === false,
+    'default add-to-cart removed');
+check('buy button hooked',
+    has_action('woocommerce_single_product_summary', ['MK\Checkout\Controller', 'renderBuyButton']) !== false);
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
