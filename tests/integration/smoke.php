@@ -628,6 +628,32 @@ if (is_wp_error($cmpSeller)) {
     check('completion fixtures removed', !wc_get_order($coId) && !get_userdata($cmpSeller));
 }
 
+echo "\n=== stripe SDK methods we depend on ===\n";
+// TransferService::reverseTransfer() did not exist. Nothing caught it: the
+// call sat on a refund path no test reached, so the first refund threw --
+// after the buyer had already been repaid and before the creator's transfer
+// was pulled back, costing the platform the whole order value.
+//
+// A mistyped SDK method is invisible in PHP until the line runs. This asserts
+// the surface exists, without a single network call.
+foreach ([
+    ['transfers',        'Stripe\Service\TransferService',       ['create', 'retrieve', 'createReversal']],
+    ['paymentIntents',   'Stripe\Service\PaymentIntentService',  ['create', 'retrieve', 'confirm', 'cancel']],
+    ['refunds',          'Stripe\Service\RefundService',         ['create']],
+    ['accounts',         'Stripe\Service\AccountService',        ['create', 'retrieve', 'update', 'delete', 'createExternalAccount']],
+    ['accountLinks',     'Stripe\Service\AccountLinkService',    ['create']],
+    ['webhookEndpoints', 'Stripe\Service\WebhookEndpointService', ['create', 'all', 'update', 'delete']],
+    ['balance',          'Stripe\Service\BalanceService',        ['retrieve']],
+    ['charges',          'Stripe\Service\ChargeService',         ['retrieve']],
+] as [$label, $class, $methods]) {
+    foreach ($methods as $m) {
+        $ok = method_exists($class, $m);
+        check($label . '->' . $m . '()', $ok, $ok ? '' : 'MISSING FROM SDK');
+    }
+}
+
+check('Webhook::constructEvent', method_exists('Stripe\Webhook', 'constructEvent'));
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 

@@ -6,6 +6,7 @@ namespace MK\Stripe;
 use MK\Fee\Calculator;
 use MK\Ledger\Recorder;
 use MK\Support\Money;
+use Stripe\Exception\InvalidRequestException;
 use RuntimeException;
 use WC_Order;
 
@@ -160,48 +161,130 @@ final class TransferService
      * $additionalCost carries the ¥1,500 dispute fee when this is a chargeback
      * rather than a voluntary refund. It is charged to the creator, per the
      * terms the client agreed.
+     *
+     * ---------------------------------------------------------------------
+     * Order of operations
+     * ---------------------------------------------------------------------
+     * The transfer is pulled back BEFORE the buyer is refunded. The other way
+     * round was tried and is wrong: any failure after the refund leaves the
+     * buyer repaid, the creator still holding their share, and the platform
+     * covering both halves of a sale it never made.
+     *
+     * That is not hypothetical. This method called a Stripe SDK method that
+     * does not exist, so every refund threw -- but only after the refund had
+     * already left. One test refund cost the platform the full ¥3,000 on a
+     * ¥3,000 order.
+     *
+     * Reversing first inverts the exposure. If the refund then fails, the
+     * platform is holding money it owes the buyer and can simply retry; it is
+     * never out of pocket, and nothing has been given away.
      */
     public function refundAndReverse(
         WC_Order $order,
         ?int $refundAmount = null,
         int $additionalCost = 0,
     ): void {
-        $payments = new PaymentService();
-        $refundId = $payments->refund($order, $refundAmount);
+        $reversed = $this->pullBackTransfer($order);
 
-        $this->reverse($order, $refundId, $additionalCost);
+        $refundId = (new PaymentService())->refund($order, $refundAmount);
+
+        $this->recordUnwind($order, $reversed, $refundId, $additionalCost);
     }
 
     /**
-     * Pull a transfer back and charge the shortfall to the creator.
+     * Claw the transfer back, and report how much actually came back.
      *
-     * Stripe keeps its processing fee on a refund, so even a full reversal
-     * leaves the platform short by that amount. That shortfall becomes the
-     * creator's outstanding balance and is deducted from their next payout.
+     * A reversal draws on the connected account's balance, and that balance
+     * may not hold the money any more: Stripe funds settle over days, and the
+     * creator may have been paid out to their bank already. Refusing to
+     * refund the buyer because of that would be the wrong call -- the buyer
+     * is owed their money regardless of where the creator's went -- so a
+     * balance failure is recorded and recovery continues through the ledger
+     * rather than aborting the refund.
+     *
+     * A failure that is NOT about balance is re-thrown. Those mean the call
+     * itself is wrong, and continuing would refund the buyer on top of a
+     * transfer that was never pulled back.
+     *
+     * @return int the amount reversed, in yen; 0 if nothing came back
      */
-    public function reverse(WC_Order $order, ?string $refundId = null, int $additionalCost = 0): void
+    private function pullBackTransfer(WC_Order $order): int
     {
-        $creatorId  = (int) $order->get_meta('_mk_creator_id');
         $transferId = (string) $order->get_meta(self::META_TRANSFER_ID);
 
-        $shortfall = $this->stripeFeeFor($order) + $additionalCost;
+        if ($transferId === '') {
+            return 0; // never paid out; nothing to pull back
+        }
 
-        if ($transferId !== '') {
-            $reversal = Client::get()->transfers->reverseTransfer($transferId, []);
+        if ($order->get_meta(self::META_STATUS) === self::STATUS_REVERSED) {
+            return (int) $order->get_meta(self::META_REVERSED);
+        }
 
-            $order->update_meta_data(self::META_REVERSED, (int) $reversal->amount);
-            $order->update_meta_data(self::META_STATUS, self::STATUS_REVERSED);
+        try {
+            // createReversal, not reverseTransfer. The latter does not exist
+            // in this SDK and the mistake was invisible until a refund was
+            // actually attempted against the live API.
+            $reversal = Client::get()->transfers->createReversal($transferId, []);
+        } catch (InvalidRequestException $e) {
+            if (!str_contains(strtolower($e->getMessage()), 'insufficient')) {
+                throw $e;
+            }
 
+            $order->add_order_note(sprintf(
+                '⚠️ 送金の巻き戻しができませんでした（クリエイター残高不足）。'
+                . '返金は実行し、回収できなかった分は未回収額として次回売上から控除します。（%s）',
+                $e->getMessage()
+            ));
+            $order->save();
+
+            return 0;
+        }
+
+        $order->update_meta_data(self::META_REVERSED, (int) $reversal->amount);
+        $order->update_meta_data(self::META_STATUS, self::STATUS_REVERSED);
+        $order->save();
+
+        return (int) $reversal->amount;
+    }
+
+    /**
+     * Write the unwind to the creator's ledger.
+     *
+     * The shortfall is everything the platform is out by and did not get back:
+     *
+     *   - Stripe's processing fee, which it keeps on a refund
+     *   - the dispute fee, on a chargeback
+     *   - any part of the creator's share that could not be reversed
+     *
+     * That last term is the one that matters most and was previously missing
+     * entirely: the old code assumed a reversal always succeeded in full and
+     * charged only the processing fee, so a creator whose balance was empty
+     * kept their whole share and the platform silently ate it.
+     */
+    private function recordUnwind(
+        WC_Order $order,
+        int $reversedAmount,
+        ?string $refundId,
+        int $additionalCost,
+    ): void {
+        $creatorId = (int) $order->get_meta('_mk_creator_id');
+
+        if ($reversedAmount > 0) {
             $this->ledger->record(
                 $creatorId,
                 $order->get_id(),
                 Recorder::REVERSAL,
-                (int) $reversal->amount,
+                $reversedAmount,
                 0,
-                $reversal->id,
+                (string) $order->get_meta(self::META_TRANSFER_ID),
                 '返金に伴う送金の巻き戻し'
             );
         }
+
+        $creatorShare = (int) $order->get_meta('_mk_creator_amount');
+        $unrecovered  = max(0, $creatorShare - $reversedAmount);
+
+        $shortfall = $this->stripeFeeFor($order) + $additionalCost + $unrecovered;
 
         if ($shortfall > 0) {
             $this->ledger->record(
@@ -212,13 +295,14 @@ final class TransferService
                 $shortfall,
                 $refundId,
                 $additionalCost > 0
-                    ? 'チャージバック手数料および決済手数料（返金時は返還されないため）'
-                    : '決済手数料（返金時は返還されないため）'
+                    ? 'チャージバック手数料・決済手数料・回収不能額'
+                    : '決済手数料および回収不能額（返金時は返還されないため）'
             );
         }
 
         $order->add_order_note(sprintf(
-            '返金処理を実行しました。未回収額 %s をクリエイターの次回売上から控除します。',
+            '返金処理を実行しました。巻き戻し %s / 未回収額 %s をクリエイターの次回売上から控除します。',
+            Money::format($reversedAmount),
             Money::format($shortfall)
         ));
         $order->save();
