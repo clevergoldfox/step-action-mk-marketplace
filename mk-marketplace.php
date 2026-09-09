@@ -85,6 +85,8 @@ add_action('plugins_loaded', static function (): void {
     }
 
     Order\Statuses::register();
+    Order\Transitions::register();
+    Product\Statuses::register();
     Schedule\Jobs::register();
 
     // The webhook route is only exposed once keys are present. Registering it

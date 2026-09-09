@@ -153,7 +153,7 @@ final class WebhookController
         $productId = (int) $order->get_meta('_mk_product_id');
 
         if ($productId > 0) {
-            wp_update_post(['ID' => $productId, 'post_status' => 'mk-sold']);
+            (new \MK\Product\Reservation())->markSold($productId);
         }
     }
 
@@ -170,7 +170,7 @@ final class WebhookController
         $productId = (int) $order->get_meta('_mk_product_id');
 
         if ($productId > 0) {
-            wp_update_post(['ID' => $productId, 'post_status' => 'publish']);
+            (new \MK\Product\Reservation())->release($productId);
         }
 
         $order->update_status('failed', '決済に失敗したため、商品の予約を解除しました。');

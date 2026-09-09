@@ -25,6 +25,7 @@ final class Jobs
     public const EXECUTE_TRANSFER = 'mk_execute_transfer';
     public const MASK_ADDRESS   = 'mk_mask_shipping_address';
     public const DAILY_DIGEST   = 'mk_send_daily_digest';
+    public const SWEEP_RESERVATIONS = 'mk_sweep_reservations';
 
     private const GROUP = 'mk-marketplace';
 
@@ -33,8 +34,9 @@ final class Jobs
         add_action(self::AUTO_COMPLETE, [self::class, 'runAutoComplete'], 10, 1);
         add_action(self::EXECUTE_TRANSFER, [self::class, 'runTransfer'], 10, 1);
         add_action(self::MASK_ADDRESS, [self::class, 'runMaskAddress'], 10, 1);
+        add_action(self::SWEEP_RESERVATIONS, [self::class, 'runSweepReservations']);
 
-        add_action('init', [self::class, 'ensureDigestScheduled']);
+        add_action('init', [self::class, 'ensureRecurringScheduled']);
     }
 
     // ------------------------------------------------------------ scheduling
@@ -135,23 +137,31 @@ final class Jobs
         );
     }
 
-    public static function ensureDigestScheduled(): void
+    public static function ensureRecurringScheduled(): void
     {
-        if (as_has_scheduled_action(self::DAILY_DIGEST, [], self::GROUP)) {
-            return;
+        if (!as_has_scheduled_action(self::DAILY_DIGEST, [], self::GROUP)) {
+            // 09:00 Japan time. wp_timezone() is used rather than a fixed
+            // offset so this stays correct if the site timezone is changed.
+            $next = new \DateTimeImmutable('tomorrow 09:00', wp_timezone());
+
+            as_schedule_recurring_action(
+                $next->getTimestamp(),
+                DAY_IN_SECONDS,
+                self::DAILY_DIGEST,
+                [],
+                self::GROUP
+            );
         }
 
-        // 09:00 Japan time. wp_timezone() is used rather than a fixed offset
-        // so this stays correct if the site timezone is ever changed.
-        $next = new \DateTimeImmutable('tomorrow 09:00', wp_timezone());
-
-        as_schedule_recurring_action(
-            $next->getTimestamp(),
-            DAY_IN_SECONDS,
-            self::DAILY_DIGEST,
-            [],
-            self::GROUP
-        );
+        if (!as_has_scheduled_action(self::SWEEP_RESERVATIONS, [], self::GROUP)) {
+            as_schedule_recurring_action(
+                time() + 5 * MINUTE_IN_SECONDS,
+                15 * MINUTE_IN_SECONDS,
+                self::SWEEP_RESERVATIONS,
+                [],
+                self::GROUP
+            );
+        }
     }
 
     // -------------------------------------------------------------- handlers
@@ -202,6 +212,22 @@ final class Jobs
         $count     = (int) get_user_meta($creatorId, 'mk_completed_sales_count', true);
 
         update_user_meta($creatorId, 'mk_completed_sales_count', $count + 1);
+    }
+
+    /**
+     * Reclaim items held by checkouts that were abandoned.
+     *
+     * Runs every 15 minutes against a 20-minute hold, so a genuine checkout
+     * is never interrupted while a closed tab frees the item within roughly
+     * half an hour.
+     */
+    public static function runSweepReservations(): void
+    {
+        $released = (new \MK\Product\Reservation())->sweepExpired();
+
+        if ($released > 0) {
+            error_log(sprintf('[mk-marketplace] released %d expired reservations', $released));
+        }
     }
 
     public static function runMaskAddress(int $orderId): void
