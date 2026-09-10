@@ -91,6 +91,31 @@ final class Controller
         add_filter('woocommerce_loop_add_to_cart_link', [self::class, 'loopButton'], 10, 2);
         add_filter('woocommerce_add_to_cart_validation', '__return_false', 99);
         add_action('template_redirect', [self::class, 'blockCartPages']);
+
+        /*
+         * And again at the block layer, because the theme is a block theme.
+         *
+         * Removing woocommerce_template_single_add_to_cart from the
+         * woocommerce_single_product_summary hook does nothing to the
+         * woocommerce/add-to-cart-form BLOCK: it renders the same template
+         * directly, without going through that hook at all. On Twenty
+         * Twenty-Five the product page therefore still showed
+         * 「お買い物カゴに追加」, and because cart additions are refused it
+         * silently bounced the visitor back to the product — a dead button
+         * that looks like a broken site.
+         *
+         * The mini-cart block in the header is the same problem wearing a
+         * different hat: a cart icon leading to a cart that redirects away.
+         *
+         * Classic hooks and block rendering are two separate surfaces, and a
+         * block theme uses the second. Filtering one is not filtering the
+         * other.
+         */
+        add_filter('render_block', [self::class, 'suppressCartBlocks'], 10, 2);
+
+        // A second way back to an unpaid order, from the account order list.
+        // The product page link only helps someone who still has that tab.
+        add_filter('woocommerce_my_account_my_orders_actions', [self::class, 'orderActions'], 10, 2);
     }
 
     public static function checkoutUrl(): string
@@ -165,6 +190,75 @@ final class Controller
     }
 
     /**
+     * Offer "pay now" on an unpaid order, and drop WooCommerce's own version.
+     *
+     * WooCommerce adds a `pay` action pointing at its checkout, which cannot
+     * take payment here — the same dead end in a different place.
+     *
+     * @param array<string,array{url:string,name:string}> $actions
+     * @return array<string,array{url:string,name:string}>
+     */
+    public static function orderActions(array $actions, $order): array
+    {
+        unset($actions['pay']);
+
+        if (!$order instanceof \WC_Order || $order->get_status() !== 'pending') {
+            return $actions;
+        }
+
+        $actions['mk_pay'] = [
+            'url'  => add_query_arg('mk_order', $order->get_id(), self::checkoutUrl()),
+            'name' => 'お支払いに進む',
+        ];
+
+        return $actions;
+    }
+
+    /**
+     * Blocks that lead to a cart this marketplace does not use.
+     *
+     * @param string              $content rendered block HTML
+     * @param array<string,mixed> $block   block, including its blockName
+     */
+    public static function suppressCartBlocks(string $content, array $block): string
+    {
+        $name = (string) ($block['blockName'] ?? '');
+
+        if ($name === '') {
+            return $content;
+        }
+
+        // The buy form on a product page. Renders the add-to-cart template
+        // directly, so removing the classic hook does nothing to it.
+        if ($name === 'woocommerce/add-to-cart-form' || $name === 'woocommerce/add-to-cart-with-options') {
+            return '';
+        }
+
+        /*
+         * The mini-cart, by prefix.
+         *
+         * Matching 'woocommerce/mini-cart' exactly removed nothing: what
+         * actually renders is mini-cart-contents and a handful of children
+         * (title-items-counter, products-table, footer...). The wrapper name
+         * is not the name in the output, and checking the page rather than
+         * trusting the filter is what showed it.
+         */
+        if (str_starts_with($name, 'woocommerce/mini-cart')) {
+            return '';
+        }
+
+        /*
+         * woocommerce/product-button is deliberately NOT suppressed.
+         *
+         * It honours woocommerce_loop_add_to_cart_link, which already turns
+         * it into a 詳細を見る link to the product. Blanking the block removed
+         * the replacement too and left listing cards with no call to action
+         * at all -- a fix that broke the thing it was fixing.
+         */
+        return $content;
+    }
+
+    /**
      * The cart and checkout pages cannot work here, so nobody should land on
      * them. They exist only because WooCommerce creates them on install.
      */
@@ -193,7 +287,7 @@ final class Controller
         $status = get_post_status($product->get_id());
 
         if ($status !== 'publish') {
-            echo '<p class="mk-unavailable">この商品は現在購入できません。</p>';
+            self::renderUnavailable($product, $status);
 
             return;
         }
@@ -241,6 +335,80 @@ final class Controller
 
         echo '<button type="submit" class="single_add_to_cart_button button alt">購入手続きへ</button>';
         echo '</form>';
+    }
+
+    /**
+     * Why this item cannot be bought right now.
+     *
+     * The three cases read very differently to the person in front of them,
+     * and collapsing them into "購入できません" is what made a working
+     * reservation look like a broken site. In particular the buyer who is
+     * mid-checkout gets their way back: they are not blocked by the hold,
+     * they are the reason for it.
+     */
+    private static function renderUnavailable(WC_Product $product, string $status): void
+    {
+        if ($status === \MK\Product\Statuses::SOLD) {
+            echo '<p class="mk-unavailable"><strong>売り切れました</strong><br>'
+                . 'この商品は他の方が購入されました。</p>';
+
+            return;
+        }
+
+        if ($status !== \MK\Product\Statuses::RESERVED) {
+            echo '<p class="mk-unavailable">この商品は現在購入できません。</p>';
+
+            return;
+        }
+
+        $holder = (int) get_post_meta($product->get_id(), '_mk_reserved_by', true);
+
+        if ($holder > 0 && $holder === get_current_user_id()) {
+            $order = self::pendingOrderFor($product->get_id(), $holder);
+
+            echo '<p class="mk-unavailable"><strong>お手続き中の商品です</strong><br>'
+                . 'お支払いが完了していません。下記より続きからお手続きいただけます。</p>';
+
+            if ($order > 0) {
+                printf(
+                    '<p><a href="%s" class="single_add_to_cart_button button alt">お支払いに進む</a></p>',
+                    esc_url(add_query_arg('mk_order', $order, self::checkoutUrl()))
+                );
+            }
+
+            return;
+        }
+
+        $until = (string) get_post_meta($product->get_id(), '_mk_reserved_until', true);
+
+        printf(
+            '<p class="mk-unavailable"><strong>他の方がお手続き中です</strong><br>'
+            . 'この商品は現在、別の方が購入手続き中です。%s'
+            . 'お手続きが完了しなかった場合は、再度ご購入いただけるようになります。</p>',
+            $until !== ''
+                ? esc_html(sprintf('%s頃まで確保されています。', get_date_from_gmt($until, 'H:i')))
+                : ''
+        );
+    }
+
+    /** The buyer's own unpaid order for this product, if there is one. */
+    private static function pendingOrderFor(int $productId, int $userId): int
+    {
+        $orders = wc_get_orders([
+            'customer_id' => $userId,
+            'status'      => ['pending'],
+            'limit'       => 5,
+            'orderby'     => 'date',
+            'order'       => 'DESC',
+        ]);
+
+        foreach ($orders as $order) {
+            if ((int) $order->get_meta('_mk_product_id') === $productId) {
+                return $order->get_id();
+            }
+        }
+
+        return 0;
     }
 
     /** @return array<int,object> */

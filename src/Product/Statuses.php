@@ -25,6 +25,46 @@ final class Statuses
     {
         add_action('init', [self::class, 'registerPostStatuses']);
         add_filter('display_post_states', [self::class, 'label'], 10, 2);
+        add_action('pre_get_posts', [self::class, 'keepSinglePagesVisible']);
+    }
+
+    /**
+     * A claimed product keeps its page; it only leaves the catalogue.
+     *
+     * The docblock above says a reserved product must disappear for everyone
+     * "except the buyer holding it", and public => false did not deliver that.
+     * WP_Query restricts a single-post request to `publish`, so the moment
+     * checkout began the item 404'd — for the buyer at the checkout most of
+     * all. A client testing the flow stepped away from the payment screen,
+     * came back, and found ページがありません and the product apparently gone.
+     * Nothing was wrong; the reservation was doing its job, invisibly and
+     * indistinguishably from a deleted listing.
+     *
+     * Only the single-product request is widened. The shop loop and search
+     * still ask for `publish` and are untouched, so a claimed item remains out
+     * of the catalogue exactly as before.
+     *
+     * Keeping sold items readable is also the right behaviour for a フリマ:
+     * a page that says 売切れ is useful to a buyer holding a link, and to the
+     * seller answering a question about something they sold last month.
+     */
+    public static function keepSinglePagesVisible(\WP_Query $query): void
+    {
+        if (is_admin() || !$query->is_main_query()) {
+            return;
+        }
+
+        // A product permalink resolves to ?product=<slug>; a grid or search
+        // never sets it, which is what keeps this off the catalogue queries.
+        if ((string) $query->get('product') === '' && (string) $query->get('name') === '') {
+            return;
+        }
+
+        if ((string) $query->get('post_type') !== 'product') {
+            return;
+        }
+
+        $query->set('post_status', ['publish', self::RESERVED, self::SOLD]);
     }
 
     public static function registerPostStatuses(): void

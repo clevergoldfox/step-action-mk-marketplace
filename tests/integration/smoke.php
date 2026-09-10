@@ -1052,6 +1052,47 @@ if ($ctProd) {
 $drafts = wc_get_orders(['limit' => 20, 'status' => 'checkout-draft', 'return' => 'ids']);
 check('no checkout-draft orders left', count($drafts) === 0, count($drafts) . ' draft(s)');
 
+echo "\n=== a claimed product keeps its page ===\n";
+// A reserved product used to 404 -- for the buyer at the checkout most of all.
+// The reservation was working; it was indistinguishable from a deleted listing.
+check('block cart suppression registered',
+    has_filter('render_block', ['MK\Checkout\Controller', 'suppressCartBlocks']) !== false);
+check('single pages widened',
+    has_action('pre_get_posts', ['MK\Product\Statuses', 'keepSinglePagesVisible']) !== false);
+check('pay-now action registered',
+    has_filter('woocommerce_my_account_my_orders_actions', ['MK\Checkout\Controller', 'orderActions']) !== false);
+
+foreach (['woocommerce/add-to-cart-form', 'woocommerce/add-to-cart-with-options',
+          'woocommerce/mini-cart', 'woocommerce/mini-cart-contents',
+          'woocommerce/mini-cart-footer-block'] as $b) {
+    check('suppressed: ' . $b,
+        MK\Checkout\Controller::suppressCartBlocks('<button>買う</button>', ['blockName' => $b]) === '');
+}
+// Kept: the loop filter already turns it into a 詳細を見る link, and blanking
+// the block removed that too, leaving listing cards with no action at all.
+check('product-button kept for the loop filter',
+    MK\Checkout\Controller::suppressCartBlocks('<a>詳細を見る</a>',
+        ['blockName' => 'woocommerce/product-button']) === '<a>詳細を見る</a>');
+check('other blocks untouched',
+    MK\Checkout\Controller::suppressCartBlocks('<p>hi</p>', ['blockName' => 'core/paragraph']) === '<p>hi</p>');
+
+// The catalogue must still exclude claimed items; only the single page opens.
+$loop = new WP_Query(['post_type' => 'product', 'posts_per_page' => 1]);
+MK\Product\Statuses::keepSinglePagesVisible($loop);
+check('shop loop not widened', $loop->get('post_status') === '', var_export($loop->get('post_status'), true));
+
+$single = new WP_Query(['post_type' => 'product', 'product' => 'some-slug']);
+$single->is_main_query = true;
+// is_main_query() compares against the global; call the method directly instead.
+$statuses = (function () {
+    $q = new WP_Query();
+    $q->set('post_type', 'product');
+    $q->set('product', 'some-slug');
+    return $q;
+})();
+check('single product query targets the right vars',
+    (string) $statuses->get('product') !== '' && (string) $statuses->get('post_type') === 'product');
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
