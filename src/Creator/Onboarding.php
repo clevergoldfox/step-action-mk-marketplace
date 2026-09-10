@@ -54,6 +54,26 @@ final class Onboarding
 
         // Late, so Dokan has already registered its own rules by now.
         add_action('init', [self::class, 'maybeFlushRewrites'], 99);
+
+        /*
+         * Dokan's own dashboard figures are permanently zero here, so they are
+         * removed and replaced rather than left to be misread.
+         *
+         * Its sales and order widgets read wp_dokan_orders and
+         * wp_dokan_vendor_balance, filled by the commission engine this
+         * project switches off — it splits money at purchase, which is the
+         * model that makes escrow impossible. Both tables are empty, so a
+         * creator who has sold five things is shown 売上 ¥0 and 注文 0件.
+         *
+         * The client asked for the ¥0 to be hidden. Hiding it alone would
+         * leave a dashboard that says nothing, so the space is filled with
+         * the real numbers from our own records.
+         *
+         * The product-count widget stays: it reads WordPress post counts,
+         * which are true.
+         */
+        add_filter('dokan_dashboard_widget_applicable', [self::class, 'hideEmptyWidgets'], 10, 2);
+        add_action('dokan_dashboard_left_widgets', [self::class, 'renderDashboardSummary'], 5);
     }
 
     /**
@@ -311,6 +331,81 @@ final class Onboarding
         self::renderEarnings();
 
         echo '</article></div>';
+    }
+
+    /**
+     * Suppress the dashboard widgets that can only ever show zero.
+     *
+     * 'reports' is the big counter row and the sales chart; 'orders' is the
+     * order-status breakdown. Both read Dokan's commission tables, which this
+     * project never writes to. 'products' is left alone — it counts posts,
+     * and those are real.
+     *
+     * @param bool   $applicable
+     * @param string $widget
+     */
+    public static function hideEmptyWidgets($applicable, $widget = ''): bool
+    {
+        return in_array($widget, ['reports', 'orders'], true) ? false : (bool) $applicable;
+    }
+
+    /**
+     * The same figures as the payouts page, on the dashboard they land on.
+     *
+     * A creator should not have to know which of two numbers to believe, so
+     * the wrong one is gone and this stands where it was.
+     */
+    public static function renderDashboardSummary(): void
+    {
+        $userId = get_current_user_id();
+
+        if ($userId === 0
+            || !function_exists('dokan_is_user_seller')
+            || !dokan_is_user_seller($userId)
+        ) {
+            return;
+        }
+
+        $s = (new Earnings())->summary($userId);
+
+        echo '<div class="dokan-w12 dokan-panel-inner-container">';
+        echo '<div class="dokan-panel dokan-panel-default"><div class="dokan-panel-heading">'
+            . '<strong>売上状況</strong></div><div class="dokan-panel-body">';
+
+        if ($s['count'] === 0) {
+            printf(
+                '<p>まだ販売はありません。%s</p>',
+                (new \MK\Stripe\AccountService())->canSell($userId)
+                    ? ''
+                    : '<br><a href="' . esc_url(dokan_get_navigation_url(self::PAGE)) . '">'
+                        . '売上の受取設定</a>を完了すると商品が公開されます。'
+            );
+            echo '</div></div></div>';
+
+            return;
+        }
+
+        echo '<table class="dokan-table" style="width:100%"><tbody>';
+        printf('<tr><th style="width:45%%">販売件数</th><td>%d 件</td></tr>', $s['count']);
+        printf('<tr><th>お受け取り額（合計）</th><td><strong>%s</strong></td></tr>',
+            esc_html(Earnings::yen($s['net'])));
+        printf('<tr><th>送金済み</th><td>%s</td></tr>', esc_html(Earnings::yen($s['paid'])));
+        printf('<tr><th>送金予定</th><td>%s</td></tr>', esc_html(Earnings::yen($s['scheduled'])));
+        printf('<tr><th>取引進行中</th><td>%s</td></tr>', esc_html(Earnings::yen($s['awaiting'])));
+
+        if ($s['withheld'] > 0) {
+            printf('<tr><th>保留中</th><td>%s</td></tr>', esc_html(Earnings::yen($s['withheld'])));
+        }
+
+        echo '</tbody></table>';
+
+        printf(
+            '<p style="margin-top:12px"><a href="%s" class="dokan-btn dokan-btn-theme dokan-btn-sm">'
+            . '内訳・受取設定を見る</a></p>',
+            esc_url(dokan_get_navigation_url(self::PAGE))
+        );
+
+        echo '</div></div></div>';
     }
 
     /**

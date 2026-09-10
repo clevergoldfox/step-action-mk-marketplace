@@ -1166,6 +1166,63 @@ if (is_wp_error($erSeller)) {
     check('earnings fixtures removed', !get_userdata($erSeller));
 }
 
+echo "\n=== dashboard widgets ===\n";
+// Dokan's sales and order widgets read its commission tables, which this
+// project never writes to, so they show 0 for a creator who has sold things.
+check('reports widget hidden',
+    MK\Creator\Onboarding::hideEmptyWidgets(true, 'reports') === false);
+check('orders widget hidden',
+    MK\Creator\Onboarding::hideEmptyWidgets(true, 'orders') === false);
+// This one counts posts, which are real. Removing it would lose good data.
+check('products widget kept',
+    MK\Creator\Onboarding::hideEmptyWidgets(true, 'products') === true);
+check('unknown widgets untouched',
+    MK\Creator\Onboarding::hideEmptyWidgets(true, 'something-else') === true);
+check('an already-false widget stays false',
+    MK\Creator\Onboarding::hideEmptyWidgets(false, 'products') === false);
+
+$wgSeller = wp_insert_user(['user_login' => 'mk_smoke_wg_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$wgBuyer  = wp_insert_user(['user_login' => 'mk_smoke_wgb_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (is_wp_error($wgSeller)) {
+    check('create widget fixtures', false, 'user creation failed');
+} else {
+    $was = get_current_user_id();
+    wp_set_current_user($wgSeller);
+
+    ob_start(); MK\Creator\Onboarding::renderDashboardSummary(); $empty = ob_get_clean();
+    check('no sales yet reads sensibly', str_contains($empty, 'まだ販売はありません'));
+
+    $o = wc_create_order();
+    $o->update_meta_data('_mk_creator_id', $wgSeller);
+    $o->update_meta_data('_mk_creator_amount', 2520);
+    $o->update_meta_data('_mk_platform_fee', 480);
+    $o->set_total('3000');
+    $o->save();
+    $oId = $o->get_id();
+    $o->update_status(MK\Order\Statuses::PAID, 'smoke');
+
+    ob_start(); MK\Creator\Onboarding::renderDashboardSummary(); $html = ob_get_clean();
+    check('shows the sale', str_contains($html, '1 件'));
+    check('shows the real amount', str_contains($html, '2,520'));
+    check('links to the detail page',
+        str_contains($html, dokan_get_navigation_url(MK\Creator\Onboarding::PAGE)));
+
+    // A buyer is not a seller and must get nothing here.
+    wp_set_current_user($wgBuyer);
+    ob_start(); MK\Creator\Onboarding::renderDashboardSummary(); $none = ob_get_clean();
+    check('non-seller sees nothing', $none === '');
+
+    wp_set_current_user($was);
+    as_unschedule_all_actions('mk_auto_complete_order', ['order_id' => $oId], 'mk-marketplace');
+    wc_get_order($oId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($wgSeller); wp_delete_user($wgBuyer);
+    check('widget fixtures removed', !get_userdata($wgSeller));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
