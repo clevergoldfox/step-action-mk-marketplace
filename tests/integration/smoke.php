@@ -1022,6 +1022,36 @@ if (is_wp_error($nfUser)) {
     check('notify fixture removed', !get_userdata($nfUser));
 }
 
+echo "\n=== no route into WooCommerce's cart ===\n";
+// A client hit "支払い可能な方法がございません" by clicking add-to-cart on the
+// shop listing: it reached WooCommerce's checkout, which has no gateway and
+// by design never will. Every entrance is now shut, not just that one.
+check('listing button filtered',
+    has_filter('woocommerce_loop_add_to_cart_link', ['MK\Checkout\Controller', 'loopButton']) !== false);
+check('cart additions blocked',
+    has_filter('woocommerce_add_to_cart_validation', '__return_false') !== false);
+check('cart pages redirect',
+    has_action('template_redirect', ['MK\Checkout\Controller', 'blockCartPages']) !== false);
+check('single add-to-cart removed',
+    has_action('woocommerce_single_product_summary', 'woocommerce_template_single_add_to_cart') === false);
+
+$ctProd = get_page_by_path('test-item-2', OBJECT, 'product');
+if ($ctProd) {
+    $p = wc_get_product($ctProd->ID);
+    $html = MK\Checkout\Controller::loopButton('<a class="add_to_cart_button">buy</a>', $p);
+    check('listing button is a product link',
+        !str_contains($html, 'add_to_cart_button') && str_contains($html, get_permalink($p->get_id())),
+        strip_tags($html));
+
+    // The real guard: even a direct add-to-cart call must fail.
+    check('add_to_cart is refused',
+        apply_filters('woocommerce_add_to_cart_validation', true, $p->get_id(), 1) === false);
+}
+
+// The client's abandoned block-checkout draft should not linger as an order.
+$drafts = wc_get_orders(['limit' => 20, 'status' => 'checkout-draft', 'return' => 'ids']);
+check('no checkout-draft orders left', count($drafts) === 0, count($drafts) . ' draft(s)');
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 

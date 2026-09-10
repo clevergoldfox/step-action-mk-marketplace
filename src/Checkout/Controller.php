@@ -64,6 +64,33 @@ final class Controller
             remove_action('woocommerce_single_product_summary', 'woocommerce_template_single_add_to_cart', 30);
             add_action('woocommerce_single_product_summary', [self::class, 'renderBuyButton'], 30);
         });
+
+        /*
+         * Close every other way into WooCommerce's cart.
+         *
+         * Removing the button from the single product page was not enough,
+         * and the gap was found by a client, not by a test. The shop listing
+         * kept rendering its own add-to-cart button on every card: one click
+         * from /shop/ put the item in WooCommerce's cart, walked to
+         * WooCommerce's checkout, and hit "支払い可能な方法がございません" —
+         * because no gateway is configured there, and by design never will be.
+         * The platform is merchant of record and the money layer is ours.
+         *
+         * Nothing was broken; the storefront was simply offering a door that
+         * opens onto a wall. So all three routes are shut rather than the one
+         * that happened to be reported:
+         *
+         *   the listing button becomes a link to the product
+         *   the cart refuses every addition, whatever the source
+         *   the cart and checkout pages send visitors back to the shop
+         *
+         * The second matters most. A bookmarked ?add-to-cart= URL, a block, a
+         * theme template or a future plugin can all reach the cart without
+         * going near a button we filtered.
+         */
+        add_filter('woocommerce_loop_add_to_cart_link', [self::class, 'loopButton'], 10, 2);
+        add_filter('woocommerce_add_to_cart_validation', '__return_false', 99);
+        add_action('template_redirect', [self::class, 'blockCartPages']);
     }
 
     public static function checkoutUrl(): string
@@ -109,6 +136,47 @@ final class Controller
 
         if (!is_wp_error($pageId)) {
             update_option(self::PAGE_OPTION, (int) $pageId);
+        }
+    }
+
+    /**
+     * On a listing card, send people to the product instead of the cart.
+     *
+     * Not a buy button: the item may carry options that have to be chosen,
+     * and buying from a grid would skip that. The product page is where the
+     * real purchase path lives.
+     *
+     * @param string $html the add-to-cart markup WooCommerce built
+     */
+    public static function loopButton(string $html, $product): string
+    {
+        if (!$product instanceof WC_Product) {
+            return $html;
+        }
+
+        $sold = in_array(get_post_status($product->get_id()), ['mk-sold', 'mk-reserved'], true);
+
+        return sprintf(
+            '<a href="%s" class="button %s">%s</a>',
+            esc_url((string) get_permalink($product->get_id())),
+            $sold ? 'disabled' : '',
+            $sold ? '売切れ' : '詳細を見る'
+        );
+    }
+
+    /**
+     * The cart and checkout pages cannot work here, so nobody should land on
+     * them. They exist only because WooCommerce creates them on install.
+     */
+    public static function blockCartPages(): void
+    {
+        if (!function_exists('is_cart')) {
+            return;
+        }
+
+        if (is_cart() || is_checkout()) {
+            wp_safe_redirect(wc_get_page_permalink('shop'));
+            exit;
         }
     }
 
