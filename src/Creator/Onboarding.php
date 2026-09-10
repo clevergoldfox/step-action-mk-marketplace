@@ -160,11 +160,16 @@ final class Onboarding
     public static function addNavItem(array $nav): array
     {
         $nav[self::PAGE] = [
-            'title' => '売上受取設定',
+            'title' => '売上・受取設定',
             'icon'  => '<i class="fas fa-yen-sign"></i>',
             'url'   => dokan_get_navigation_url(self::PAGE),
             'pos'   => 55,
         ];
+
+        // Dokan's withdrawal system is not used: Stripe pays creators
+        // directly on its own schedule, and there is nothing here to request.
+        // Leaving the menu in place offers a form that can never do anything.
+        unset($nav['withdraw']);
 
         return $nav;
     }
@@ -301,7 +306,84 @@ final class Onboarding
         echo '<p class="description">口座情報・本人確認書類は Stripe が直接お預かりします。'
             . '当サイトでは保持いたしません。</p>';
 
-        echo '</div></div></article></div>';
+        echo '</div></div>';
+
+        self::renderEarnings();
+
+        echo '</article></div>';
+    }
+
+    /**
+     * The creator's sales, from our own records.
+     *
+     * Dokan's dashboard shows ¥0 for every creator here and always will: it
+     * reads its own commission tables, which this project deliberately never
+     * writes to. See Creator\Earnings for why those are not back-filled.
+     */
+    private static function renderEarnings(): void
+    {
+        $userId   = get_current_user_id();
+        $earnings = new Earnings();
+        $s        = $earnings->summary($userId);
+
+        echo '<div class="dokan-panel dokan-panel-default"><div class="dokan-panel-heading">'
+            . '<strong>売上状況</strong></div><div class="dokan-panel-body">';
+
+        if ($s['count'] === 0) {
+            echo '<p>まだ販売はありません。</p></div></div>';
+
+            return;
+        }
+
+        echo '<table class="dokan-table" style="width:100%;margin-bottom:16px"><tbody>';
+        printf('<tr><th style="width:40%%">販売件数</th><td>%d 件</td></tr>', $s['count']);
+        printf('<tr><th>販売総額</th><td>%s</td></tr>', esc_html(Earnings::yen($s['gross'])));
+        printf('<tr><th>運営手数料</th><td>− %s</td></tr>', esc_html(Earnings::yen($s['commission'])));
+        printf('<tr><th><strong>お受け取り額（合計）</strong></th><td><strong>%s</strong></td></tr>',
+            esc_html(Earnings::yen($s['net'])));
+        echo '</tbody></table>';
+
+        echo '<table class="dokan-table" style="width:100%"><tbody>';
+        printf('<tr><th style="width:40%%">送金済み</th><td>%s</td></tr>',
+            esc_html(Earnings::yen($s['paid'])));
+        printf('<tr><th>送金予定</th><td>%s</td></tr>',
+            esc_html(Earnings::yen($s['scheduled'])));
+        printf('<tr><th>取引進行中</th><td>%s<br><small>発送・受取確認が完了すると送金予定に変わります</small></td></tr>',
+            esc_html(Earnings::yen($s['awaiting'])));
+
+        if ($s['withheld'] > 0) {
+            printf('<tr><th>保留中</th><td>%s<br><small>確認対応中のため送金を保留しています</small></td></tr>',
+                esc_html(Earnings::yen($s['withheld'])));
+        }
+
+        if ($s['outstanding'] > 0) {
+            printf('<tr><th>未回収額</th><td>− %s<br><small>返金等により生じた金額です。次回の送金から差し引かれます</small></td></tr>',
+                esc_html(Earnings::yen($s['outstanding'])));
+        }
+
+        echo '</tbody></table>';
+
+        echo '<h4 style="margin-top:20px">取引ごとの内訳</h4>';
+        echo '<table class="dokan-table" style="width:100%"><thead><tr>'
+            . '<th>注文</th><th>商品</th><th>お受け取り額</th><th>状態</th><th>送金予定日</th>'
+            . '</tr></thead><tbody>';
+
+        foreach ($earnings->orders($userId, 20) as $order) {
+            printf(
+                '<tr><td>#%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                $order->get_id(),
+                esc_html((string) $order->get_meta('_mk_title_snapshot')),
+                esc_html(Earnings::yen((int) $order->get_meta('_mk_creator_amount'))),
+                esc_html($earnings->stateLabel($order)),
+                esc_html($earnings->dueLabel($order))
+            );
+        }
+
+        echo '</tbody></table>';
+        echo '<p><small>※ ダッシュボードのトップに表示される売上金額は、'
+            . '本サービスでは使用していない集計のため 0 円のまま変わりません。'
+            . '正しい売上はこちらの表をご覧ください。</small></p>';
+        echo '</div></div>';
     }
 
     // ------------------------------------------------------- stripe handoff

@@ -1017,6 +1017,11 @@ if (is_wp_error($nfUser)) {
     check('mk_should_notify can suppress', count($fake->got) === $before);
     remove_filter('mk_should_notify', '__return_false');
 
+    // Unregister both test channels. Left in place they fire on every
+    // notification raised by later sections -- harmless, since a throwing
+    // channel is caught, but it buries real output under fake failures.
+    remove_all_filters('mk_notification_channels');
+
     require_once ABSPATH . 'wp-admin/includes/user.php';
     wp_delete_user($nfUser);
     check('notify fixture removed', !get_userdata($nfUser));
@@ -1039,8 +1044,12 @@ $ctProd = get_page_by_path('test-item-2', OBJECT, 'product');
 if ($ctProd) {
     $p = wc_get_product($ctProd->ID);
     $html = MK\Checkout\Controller::loopButton('<a class="add_to_cart_button">buy</a>', $p);
+    // esc_url() encodes & as &#038;, so compare against the escaped form.
+    // A sold item shows 売切れ rather than 詳細を見る; both are product links,
+    // which is the property under test.
     check('listing button is a product link',
-        !str_contains($html, 'add_to_cart_button') && str_contains($html, get_permalink($p->get_id())),
+        !str_contains($html, 'add_to_cart_button')
+            && str_contains($html, esc_url(get_permalink($p->get_id()))),
         strip_tags($html));
 
     // The real guard: even a direct add-to-cart call must fail.
@@ -1092,6 +1101,70 @@ $statuses = (function () {
 })();
 check('single product query targets the right vars',
     (string) $statuses->get('product') !== '' && (string) $statuses->get('post_type') === 'product');
+
+echo "\n=== creator earnings (Dokan's own figures are always 0 here) ===\n";
+$erSeller = wp_insert_user(['user_login' => 'mk_smoke_er_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($erSeller)) {
+    check('create earnings seller', false, $erSeller->get_error_message());
+} else {
+    wp_set_current_user(0);
+    $er = new MK\Creator\Earnings();
+    check('starts empty', $er->summary($erSeller)['count'] === 0);
+
+    $make = function (string $status, int $total, int $net, array $meta = []) use ($erSeller) {
+        $o = wc_create_order();
+        $o->update_meta_data('_mk_creator_id', $erSeller);
+        $o->update_meta_data('_mk_creator_amount', $net);
+        $o->update_meta_data('_mk_platform_fee', $total - $net);
+        $o->update_meta_data('_mk_title_snapshot', 'smoke item');
+        foreach ($meta as $k => $v) { $o->update_meta_data($k, $v); }
+        $o->set_total((string) $total);
+        $o->save();
+        if ($status !== 'pending') { $o->update_status($status, 'smoke'); }
+        return $o->get_id();
+    };
+
+    $paidId     = $make(MK\Order\Statuses::PAID, 3000, 2520);
+    $recvId     = $make(MK\Order\Statuses::RECEIVED, 8000, 6720);
+    $doneId     = $make(MK\Order\Statuses::RECEIVED, 1500, 1260,
+                      [MK\Stripe\TransferService::META_TRANSFER_ID => 'tr_smoke']);
+    $heldId     = $make(MK\Order\Statuses::RECEIVED, 5000, 4200, ['_mk_has_open_report' => 'yes']);
+
+    $s = $er->summary($erSeller);
+    check('counts every sale', $s['count'] === 4, (string) $s['count']);
+    check('gross', $s['gross'] === 17500, (string) $s['gross']);
+    check('net', $s['net'] === 14700, (string) $s['net']);
+    check('commission', $s['commission'] === 2800, (string) $s['commission']);
+
+    // The four states answer "how much" and "when" separately.
+    check('already paid', $s['paid'] === 1260, (string) $s['paid']);
+    check('scheduled', $s['scheduled'] === 6720, (string) $s['scheduled']);
+    check('still in progress', $s['awaiting'] === 2520, (string) $s['awaiting']);
+    check('withheld by a report', $s['withheld'] === 4200, (string) $s['withheld']);
+    check('states sum to net',
+        $s['paid'] + $s['scheduled'] + $s['awaiting'] + $s['withheld'] === $s['net']);
+
+    check('label: 発送待ち', $er->stateLabel(wc_get_order($paidId)) === '発送待ち');
+    check('label: 送金待ち', $er->stateLabel(wc_get_order($recvId)) === '送金待ち');
+    check('label: 送金済み', $er->stateLabel(wc_get_order($doneId)) === '送金済み');
+    check('label: 保留中', str_contains($er->stateLabel(wc_get_order($heldId)), '保留中'));
+
+    // Another creator's sales must never appear here.
+    $other = wp_insert_user(['user_login' => 'mk_smoke_er2_' . wp_rand(1000,9999),
+        'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+    check('scoped to one creator', $er->summary($other)['count'] === 0);
+
+    foreach ([$paidId, $recvId, $doneId, $heldId] as $id) {
+        as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $id], 'mk-marketplace');
+        as_unschedule_all_actions('mk_auto_complete_order', ['order_id' => $id], 'mk-marketplace');
+        wc_get_order($id)->delete(true);
+    }
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($erSeller); wp_delete_user($other);
+    check('earnings fixtures removed', !get_userdata($erSeller));
+}
 
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
