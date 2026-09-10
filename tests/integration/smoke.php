@@ -954,6 +954,74 @@ $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_option_groups WHERE i
 wp_delete_post($opProd, true);
 check('option fixtures removed', !get_post($opProd));
 
+echo "\n=== notification layer ===\n";
+check('email channel present',
+    count(array_filter(MK\Notify\Dispatcher::channels(),
+        fn($c) => $c->name() === 'email')) === 1);
+
+// The client asked that LINE be addable later. Prove a new channel can be
+// bolted on without touching a single line that raises a notification.
+$fake = new class implements MK\Notify\Channel {
+    public array $got = [];
+    public function name(): string { return 'fake-line'; }
+    public function isAvailableFor(int $userId): bool {
+        return get_user_meta($userId, 'mk_line_user_id', true) !== '';
+    }
+    public function send(MK\Notify\Notification $n): bool { $this->got[] = $n; return true; }
+};
+$GLOBALS['mk_fake_channel'] = $fake;
+add_filter('mk_notification_channels', function (array $ch) { $ch[] = $GLOBALS['mk_fake_channel']; return $ch; });
+
+check('channel added by filter', count(MK\Notify\Dispatcher::channels()) === 2,
+    count(MK\Notify\Dispatcher::channels()) . ' channels');
+
+$nfUser = wp_insert_user(['user_login' => 'mk_smoke_nf_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($nfUser)) {
+    check('create notify fixture', false, $nfUser->get_error_message());
+} else {
+    $n = new MK\Notify\Notification('test.event', $nfUser, '件名', '本文', '一行', home_url('/'));
+
+    // Not linked yet: the new channel must decline, mail must still go.
+    MK\Notify\Dispatcher::send($n);
+    check('unlinked user skipped by new channel', count($fake->got) === 0,
+        count($fake->got) . ' delivered');
+
+    // Linked: both channels take it, with no change to the caller.
+    update_user_meta($nfUser, 'mk_line_user_id', 'U_fake_123');
+    MK\Notify\Dispatcher::send($n);
+    check('linked user reached by new channel', count($fake->got) === 1);
+    check('same notification object', $fake->got[0]->type === 'test.event');
+    check('short form carried for LINE', $fake->got[0]->short === '一行');
+
+    // A channel that explodes must not take the transaction down with it.
+    $boom = new class implements MK\Notify\Channel {
+        public function name(): string { return 'boom'; }
+        public function isAvailableFor(int $u): bool { return true; }
+        public function send(MK\Notify\Notification $n): bool { throw new RuntimeException('down'); }
+    };
+    $GLOBALS['mk_boom_channel'] = $boom;
+    add_filter('mk_notification_channels', function (array $ch) { $ch[] = $GLOBALS['mk_boom_channel']; return $ch; });
+
+    $before = count($fake->got);
+    $threw = false;
+    try { MK\Notify\Dispatcher::send($n); } catch (Throwable $e) { $threw = true; }
+    check('failing channel does not throw', !$threw);
+    check('other channels still delivered', count($fake->got) === $before + 1);
+
+    // The seam a digest would use, to keep LINE's per-message billing down.
+    add_filter('mk_should_notify', '__return_false');
+    $before = count($fake->got);
+    MK\Notify\Dispatcher::send($n);
+    check('mk_should_notify can suppress', count($fake->got) === $before);
+    remove_filter('mk_should_notify', '__return_false');
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($nfUser);
+    check('notify fixture removed', !get_userdata($nfUser));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 

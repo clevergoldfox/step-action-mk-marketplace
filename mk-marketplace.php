@@ -116,6 +116,7 @@ add_action('plugins_loaded', static function (): void {
     Order\Receipt::register();
     Creator\Onboarding::register();
     Checkout\Controller::register();
+    Notify\Events::register();
     Option\Admin::register();
     Option\ProductPanel::register();
     Follow\Frontend::register();

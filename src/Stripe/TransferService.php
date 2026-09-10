@@ -152,6 +152,11 @@ final class TransferService
         );
         $order->save();
 
+        // Announced only once the money has actually left, and after the
+        // order is saved. A creator told they have been paid by a transfer
+        // that then failed to record is worse than one told a moment later.
+        do_action('mk_transfer_sent', $order->get_id(), $creatorId, $split['transfer']);
+
         return $transfer->id;
     }
 

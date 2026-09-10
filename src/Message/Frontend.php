@@ -28,7 +28,6 @@ final class Frontend
 
         add_action('template_redirect', [self::class, 'handleSubmit']);
 
-        add_action('mk_message_sent', [self::class, 'notify'], 10, 4);
     }
 
     public static function renderForBuyer(WC_Order $order): void
@@ -134,37 +133,5 @@ final class Frontend
 
         wp_safe_redirect(wp_get_referer() ?: $order->get_view_order_url());
         exit;
-    }
-
-    /**
-     * Tell the recipient something is waiting.
-     *
-     * Email for now. When LINE is added it listens on the same hook rather
-     * than editing this, so a creator who has linked LINE gets it there and
-     * everyone else still gets the mail.
-     */
-    public static function notify(int $messageId, int $orderId, int $senderId, int $receiverId): void
-    {
-        $receiver = get_userdata($receiverId);
-        $sender   = get_userdata($senderId);
-        $order    = wc_get_order($orderId);
-
-        if (!$receiver || !$order) {
-            return;
-        }
-
-        wp_mail(
-            $receiver->user_email,
-            sprintf('[%s] 取引メッセージが届いています', get_bloginfo('name')),
-            sprintf(
-                "%s 様\n\n%s さんから、ご注文 #%d についてメッセージが届いています。\n\n"
-                . "下記よりご確認ください。\n%s\n\n"
-                . "※このメールは送信専用です。返信はサイト内からお願いいたします。\n",
-                $receiver->display_name,
-                $sender ? $sender->display_name : '取引相手',
-                $orderId,
-                $order->get_view_order_url()
-            )
-        );
     }
 }

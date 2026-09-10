@@ -1,0 +1,192 @@
+<?php
+declare(strict_types=1);
+
+namespace MK\Notify;
+
+use MK\Order\Shipping;
+use MK\Order\Statuses;
+use MK\Support\Money;
+use WC_Order;
+
+/**
+ * Turns things that happen into notifications.
+ *
+ * Every transactional event in the marketplace is raised here and nowhere
+ * else. WooCommerce sends its own mail for its own statuses and knows nothing
+ * about 購入済 / 発送済 / 受取確認, so without this the entire transaction ran
+ * silently: a creator was never told they had sold anything, and a buyer was
+ * never told their parcel had been posted.
+ *
+ * Which events exist is a product decision and it is the list the client
+ * approved. What is NOT here is equally deliberate — nothing is sent for a
+ * status the other party caused and is already looking at.
+ */
+final class Events
+{
+    public static function register(): void
+    {
+        add_action('woocommerce_order_status_changed', [self::class, 'onStatusChanged'], 20, 4);
+        add_action('mk_message_sent', [self::class, 'onMessage'], 10, 4);
+        add_action('mk_report_opened', [self::class, 'onReport'], 10, 3);
+        add_action('mk_transfer_sent', [self::class, 'onTransferSent'], 10, 3);
+    }
+
+    public static function onStatusChanged(int $orderId, string $from, string $to, WC_Order $order): void
+    {
+        match (Statuses::bare($to)) {
+            Statuses::PAID     => self::notifyCreatorOfSale($order),
+            Statuses::SHIPPED  => self::notifyBuyerOfShipment($order),
+            Statuses::RECEIVED => self::notifyCreatorOfReceipt($order),
+            default            => null,
+        };
+    }
+
+    private static function notifyCreatorOfSale(WC_Order $order): void
+    {
+        $creatorId = (int) $order->get_meta('_mk_creator_id');
+        $title     = (string) $order->get_meta('_mk_title_snapshot');
+        $creator   = (int) $order->get_meta('_mk_creator_amount');
+
+        Dispatcher::send(new Notification(
+            type: 'order.paid',
+            userId: $creatorId,
+            subject: '商品が購入されました',
+            body: sprintf(
+                "「%s」が購入されました。\n\n"
+                . "ご注文番号：#%d\n"
+                . "お受け取り予定額：%s（手数料差引後）\n\n"
+                . "発送の準備が整いましたら、出品者ダッシュボードから発送登録を行ってください。\n"
+                . "発送登録を行わないと取引が進みません。",
+                $title,
+                $order->get_id(),
+                Money::format($creator)
+            ),
+            short: sprintf('「%s」が購入されました。発送登録をお願いします。', $title),
+            url: dokan_get_navigation_url('orders'),
+            context: ['order_id' => $order->get_id()],
+        ));
+    }
+
+    private static function notifyBuyerOfShipment(WC_Order $order): void
+    {
+        $carrier  = (string) $order->get_meta(Shipping::META_CARRIER_NAME);
+        $tracking = (string) $order->get_meta(Shipping::META_TRACKING);
+        $noTrack  = $order->get_meta(Shipping::META_NO_TRACKING) === 'yes';
+        $days     = (int) get_option('mk_auto_complete_days', 7);
+
+        $trackingLine = $noTrack
+            ? "追跡番号：なし（追跡番号のない発送方法のため、配送状況は確認できません）"
+            : sprintf('追跡番号：%s', $tracking !== '' ? $tracking : '未登録');
+
+        Dispatcher::send(new Notification(
+            type: 'order.shipped',
+            userId: $order->get_customer_id(),
+            subject: '商品が発送されました',
+            body: sprintf(
+                "ご注文の商品が発送されました。\n\n"
+                . "ご注文番号：#%d\n配送会社：%s\n%s\n\n"
+                . "商品がお手元に届きましたら、注文履歴から「受取確認」をお願いいたします。\n"
+                . "発送から%d日が経過した場合は、自動的に受取確認となります。",
+                $order->get_id(),
+                $carrier !== '' ? $carrier : '—',
+                $trackingLine,
+                $days
+            ),
+            short: sprintf('ご注文商品が発送されました（%s）。', $carrier !== '' ? $carrier : '発送済'),
+            url: $order->get_view_order_url(),
+            context: ['order_id' => $order->get_id()],
+        ));
+    }
+
+    private static function notifyCreatorOfReceipt(WC_Order $order): void
+    {
+        $due = (string) $order->get_meta('_mk_transfer_due_at');
+
+        Dispatcher::send(new Notification(
+            type: 'order.received',
+            userId: (int) $order->get_meta('_mk_creator_id'),
+            subject: '受取確認が完了しました',
+            body: sprintf(
+                "ご注文 #%d について、購入者による受取確認が完了しました。\n\n"
+                . "お支払い予定日：%s頃\n\n"
+                . "所定の保留期間を経過後、ご登録の口座へ送金いたします。",
+                $order->get_id(),
+                $due !== '' ? get_date_from_gmt($due, 'Y年n月j日') : '保留期間経過後'
+            ),
+            short: sprintf('受取確認が完了しました（注文 #%d）。', $order->get_id()),
+            url: dokan_get_navigation_url('orders'),
+            context: ['order_id' => $order->get_id()],
+        ));
+    }
+
+    /** Raised by TransferService once the money has actually gone. */
+    public static function onTransferSent(int $orderId, int $creatorId, int $amount): void
+    {
+        Dispatcher::send(new Notification(
+            type: 'payout.sent',
+            userId: $creatorId,
+            subject: '売上を送金しました',
+            body: sprintf(
+                "ご注文 #%d の売上 %s を送金いたしました。\n\n"
+                . "Stripe からご登録口座への入金は、通常この後数営業日以内に行われます。\n"
+                . "入金状況は Stripe のダッシュボードからもご確認いただけます。",
+                $orderId,
+                Money::format($amount)
+            ),
+            short: sprintf('売上 %s を送金しました。', Money::format($amount)),
+            url: dokan_get_navigation_url('mk-payouts'),
+            context: ['order_id' => $orderId],
+        ));
+    }
+
+    public static function onMessage(int $messageId, int $orderId, int $senderId, int $receiverId): void
+    {
+        $sender = get_userdata($senderId);
+        $order  = wc_get_order($orderId);
+
+        Dispatcher::send(new Notification(
+            type: 'message.received',
+            userId: $receiverId,
+            subject: '取引メッセージが届いています',
+            body: sprintf(
+                "%s さんから、ご注文 #%d についてメッセージが届いています。\n\n"
+                . "内容の確認とご返信は、サイト内からお願いいたします。",
+                $sender ? $sender->display_name : '取引相手',
+                $orderId
+            ),
+            short: sprintf('%s さんからメッセージが届いています。',
+                $sender ? $sender->display_name : '取引相手'),
+            url: $order instanceof WC_Order ? $order->get_view_order_url() : home_url('/'),
+            context: ['order_id' => $orderId, 'message_id' => $messageId],
+        ));
+    }
+
+    /**
+     * Tell the operator, not the reported party.
+     *
+     * A report freezes a creator's payout, and the operator has to act before
+     * anything moves again. Telling the creator they have been reported, before
+     * anyone has looked at it, invites them to go and argue with the buyer.
+     */
+    public static function onReport(int $reportId, string $targetType, int $targetId): void
+    {
+        foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
+            Dispatcher::send(new Notification(
+                type: 'report.opened',
+                userId: (int) $adminId,
+                subject: '通報が届いています',
+                body: sprintf(
+                    "新しい通報が届いています（通報ID：%d／対象：%s #%d）。\n\n"
+                    . "対象が取引の場合、確認が完了するまで出品者への送金は保留されます。\n"
+                    . "管理画面よりご対応ください。",
+                    $reportId,
+                    $targetType,
+                    $targetId
+                ),
+                short: sprintf('通報 #%d が届いています。送金は保留中です。', $reportId),
+                url: admin_url('admin.php?page=mk-reports'),
+                context: ['report_id' => $reportId],
+            ));
+        }
+    }
+}
