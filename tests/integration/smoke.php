@@ -283,15 +283,36 @@ if (is_wp_error($gateUser)) {
 
     check('publish demoted to draft', get_post_status($held) === 'draft', get_post_status($held));
     check('held marker written', get_post_meta($held, MK\Product\PublishGate::META_HELD, true) === 'yes');
+    check('unreviewed: headed for approval, not live',
+        get_post_meta($held, MK\Product\PublishGate::META_RELEASE_TO, true) === 'pending',
+        (string) get_post_meta($held, MK\Product\PublishGate::META_RELEASE_TO, true));
 
-    // Onboarding completes -> everything that was only waiting goes live.
+    // The same, from a creator the operator has marked trusted: Dokan would
+    // publish their listings directly, so release does too.
+    update_user_meta($gateUser, 'dokan_publishing', 'yes');
+    $trusted = wp_insert_post([
+        'post_type'   => 'product',
+        'post_status' => 'publish',
+        'post_title'  => 'MK smoke held product (trusted)',
+        'post_author' => $gateUser,
+    ]);
+    check('trusted creator still held while unpayable', get_post_status($trusted) === 'draft', get_post_status($trusted));
+
+    // Onboarding completes -> everything moves on to where it was headed.
     update_user_meta($gateUser, MK\Stripe\AccountService::META_STATUS,
         MK\Stripe\AccountService::STATUS_COMPLETED);
 
     do_action('mk_creator_onboarding_completed', $gateUser);
 
-    check('released on completion', get_post_status($held) === 'publish', get_post_status($held));
+    // The bypass this guards against: list -> held -> onboard -> live with
+    // nobody having reviewed it.
+    check('unreviewed listing released to the approval queue, not live',
+        get_post_status($held) === 'pending', get_post_status($held));
+    check('trusted listing released live', get_post_status($trusted) === 'publish', get_post_status($trusted));
     check('held marker cleared', get_post_meta($held, MK\Product\PublishGate::META_HELD, true) === '');
+    check('release target cleared', get_post_meta($held, MK\Product\PublishGate::META_RELEASE_TO, true) === '');
+    delete_user_meta($gateUser, 'dokan_publishing');
+    wp_delete_post($trusted, true);
 
     $free = wp_insert_post([
         'post_type'   => 'product',
@@ -1291,29 +1312,56 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
     $spy = function ($n) use (&$sent) { $sent[] = $n; };
     add_action('mk_notification_sent', $spy);
 
-    // The scenario that was proven broken: an administrator approving a
-    // listing for a creator who cannot yet be paid.
+    // By reference, not an arrow fn: an arrow fn captures $sent by value when
+    // it is created, so every call would see the empty snapshot and the
+    // "NOT notified" checks below would pass without testing anything.
+    $typed = function (string $t) use (&$sent): array {
+        return array_values(array_filter($sent, fn($n) => $n->type === $t));
+    };
+
+    // An unpayable creator's submission is kept out of the approval queue:
+    // approving it could not put it on sale.
     $p1 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
         'post_title' => 'smoke: awaiting approval', 'post_author' => $apSeller]);
-    check('operator told a listing is waiting',
-        (bool) array_filter($sent, fn($n) => $n->type === 'listing.pending'));
+    check('unpayable submission held out of the queue', get_post_status($p1) === 'draft', get_post_status($p1));
+    check('operator NOT asked to review it', !$typed('listing.pending'));
 
+    // The scenario that was proven broken: an administrator approving a
+    // listing for a creator who cannot yet be paid.
     wp_set_current_user($apAdmin);
     wp_update_post(['ID' => $p1, 'post_status' => 'publish']);
     check('admin approval cannot publish for an unpayable creator',
         get_post_status($p1) !== 'publish', get_post_status($p1));
     check('held for automatic release', get_post_meta($p1, MK\Product\PublishGate::META_HELD, true) === 'yes');
-    check('creator NOT told it is live',
-        !array_filter($sent, fn($n) => $n->type === 'listing.published'));
+    check('approval remembered for release',
+        get_post_meta($p1, MK\Product\PublishGate::META_RELEASE_TO, true) === 'publish');
+    check('creator NOT told it is live', !$typed('listing.published'));
+
+    // A second, never-approved submission from the same creator.
+    wp_set_current_user($apSeller);
+    $p4 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
+        'post_title' => 'smoke: submitted before onboarding', 'post_author' => $apSeller]);
+    wp_set_current_user($apAdmin);
+
+    // Onboarding completes: the approved one goes live and the creator hears
+    // about it; the unapproved one enters the queue and the operator does.
+    update_user_meta($apSeller, MK\Stripe\AccountService::META_STATUS, MK\Stripe\AccountService::STATUS_COMPLETED);
+    do_action('mk_creator_onboarding_completed', $apSeller);
+    check('approved listing live after onboarding', get_post_status($p1) === 'publish', get_post_status($p1));
+    check('creator told the approved listing is live',
+        (bool) array_filter($typed('listing.published'), fn($n) => ($n->context['product_id'] ?? 0) === $p1));
+    check('unapproved listing enters the queue', get_post_status($p4) === 'pending', get_post_status($p4));
+    check('operator now asked to review it',
+        (bool) array_filter($typed('listing.pending'), fn($n) => ($n->context['product_id'] ?? 0) === $p4));
 
     // Once the creator can be paid, approval works normally.
-    update_user_meta($apSeller, MK\Stripe\AccountService::META_STATUS, MK\Stripe\AccountService::STATUS_COMPLETED);
+    $sent = [];
     $p2 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
         'post_title' => 'smoke: approvable', 'post_author' => $apSeller]);
+    check('payable submission goes straight to the queue', get_post_status($p2) === 'pending', get_post_status($p2));
     wp_update_post(['ID' => $p2, 'post_status' => 'publish']);
     check('admin approval publishes for a payable creator', get_post_status($p2) === 'publish');
-    check('creator told it is live',
-        (bool) array_filter($sent, fn($n) => $n->type === 'listing.published'));
+    check('creator told it is live', (bool) $typed('listing.published'));
 
     // An administrator's own products are not a seller's and are unaffected.
     $p3 = wp_insert_post(['post_type' => 'product', 'post_status' => 'publish',
@@ -1324,11 +1372,58 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
 
     remove_action('mk_notification_sent', $spy);
     wp_set_current_user($was);
-    foreach ([$p1, $p2, $p3] as $pid) { wp_delete_post($pid, true); }
+    foreach ([$p1, $p2, $p3, $p4] as $pid) { wp_delete_post($pid, true); }
     require_once ABSPATH . 'wp-admin/includes/user.php';
     wp_delete_user($apSeller);
     check('approval fixtures removed', !get_userdata($apSeller));
 }
+
+echo "\n=== LINE rich-menu links ===\n";
+$lnBuyer  = wp_insert_user(['user_login' => 'mk_smoke_lnb_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+$lnSeller = wp_insert_user(['user_login' => 'mk_smoke_lns_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($lnBuyer) || is_wp_error($lnSeller)) {
+    check('create LINE fixtures', false, 'fixture setup failed');
+} else {
+    $account = wc_get_page_permalink('myaccount');
+
+    foreach (array_keys(MK\Line\Links::destinations()) as $slug) {
+        $u = MK\Line\Links::resolve($slug, 0);
+        check("/line/$slug/ resolves for a visitor", is_string($u) && str_starts_with($u, home_url()), (string) $u);
+    }
+
+    check('unknown slug refused', MK\Line\Links::resolve('nope', 0) === null);
+    check('出品する: visitor -> login', MK\Line\Links::resolve('sell', 0) === $account);
+    check('出品する: buyer -> become a seller',
+        str_contains((string) MK\Line\Links::resolve('sell', $lnBuyer), 'account-migration'));
+    check('出品する: seller -> listing form',
+        str_contains((string) MK\Line\Links::resolve('sell', $lnSeller), 'new-product'));
+    check('受取設定: seller -> payouts',
+        str_contains((string) MK\Line\Links::resolve('payouts', $lnSeller), MK\Creator\Onboarding::PAGE));
+    check('購入履歴: buyer -> orders',
+        str_contains((string) MK\Line\Links::resolve('orders', $lnBuyer), 'orders'));
+    check('creator -> home lookup anchor',
+        str_ends_with((string) MK\Line\Links::resolve('creator', 0), '#creator-search'));
+
+    // A stale cookie from someone else's tap must not hijack an ordinary login.
+    $_COOKIE['mk_line_after_login'] = 'https://evil.example/';
+    check('tampered return cookie ignored', MK\Line\Links::afterLogin('/x') === '/x');
+    $_COOKIE['mk_line_after_login'] = 'sell';
+    check('return cookie goes back through /line/',
+        @MK\Line\Links::afterLogin('/x') === MK\Line\Links::url('sell'));
+    unset($_COOKIE['mk_line_after_login']);
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($lnBuyer); wp_delete_user($lnSeller);
+    check('LINE fixtures removed', !get_userdata($lnBuyer) && !get_userdata($lnSeller));
+}
+
+echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
+$js = MK\I18n\DokanTranslations::scriptMessages();
+check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');
+check('Dokan branding replaced by site name', ($js['Dokan'] ?? '') === get_bloginfo('name'));
 
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());

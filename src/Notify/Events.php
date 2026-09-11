@@ -40,9 +40,10 @@ final class Events
      * out is to keep reloading their product list, and one who lists something
      * and hears nothing reasonably assumes it failed.
      *
-     * A listing approved for a creator who cannot yet be paid does not go
-     * pending -> publish at all (PublishGate holds it as a draft), so no
-     * "published" message is sent for something that is not actually live.
+     * A listing from a creator who cannot yet be paid never reaches pending or
+     * publish at all (PublishGate holds it as a draft), so the operator is not
+     * asked to review something unsellable and no "published" message is sent
+     * for something that is not actually live.
      */
     public static function onListingStatus(string $new, string $old, \WP_Post $post): void
     {
@@ -78,7 +79,14 @@ final class Events
             return;
         }
 
-        if ($old === 'pending' && $new === 'publish') {
+        // The second case is an approval that was held for onboarding and has
+        // now taken effect (PublishGate::releaseHeld). It goes draft ->
+        // publish, and the held marker is still on the post during the
+        // transition, which tells it apart from a creator's ordinary draft.
+        $releasedApproval = $old === 'draft'
+            && get_post_meta($post->ID, \MK\Product\PublishGate::META_HELD, true) === 'yes';
+
+        if ($new === 'publish' && ($old === 'pending' || $releasedApproval)) {
             Dispatcher::send(new Notification(
                 type: 'listing.published',
                 userId: $author,
