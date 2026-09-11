@@ -143,21 +143,69 @@ final class Onboarding
             return $existing;
         }
 
-        try {
-            $number = (new Numbering())->allocate();
-        } catch (Throwable $e) {
-            error_log(sprintf(
-                '[mk-marketplace] could not allocate a creator number for user %d: %s',
-                $userId,
-                $e->getMessage()
-            ));
+        /*
+         * Skip any number that is already held.
+         *
+         * Allocation is atomic, so two registrations can never be handed the
+         * same number. What that does NOT protect against is the counter
+         * falling behind numbers that were already issued -- and it did.
+         * Test scripts allocated a number to a throwaway user, crashed before
+         * deleting that user, and then rolled the counter back. The next real
+         * allocation reissued A00001, and three accounts ended up holding it.
+         * Searching A00001 then led buyers to whichever one the database
+         * happened to return first, which was not the creator they wanted.
+         *
+         * Checking for an existing holder makes the counter's position
+         * irrelevant: however it got behind, allocation walks forward past
+         * every number in use. Numbers are never reused, even after the
+         * holder is deleted, because a number that has been printed on a flyer
+         * or shared with a friend must never quietly start pointing at
+         * somebody else.
+         */
+        for ($attempt = 0; $attempt < 50; $attempt++) {
+            try {
+                $number = (new Numbering())->allocate();
+            } catch (Throwable $e) {
+                error_log(sprintf(
+                    '[mk-marketplace] could not allocate a creator number for user %d: %s',
+                    $userId,
+                    $e->getMessage()
+                ));
 
-            return '';
+                return '';
+            }
+
+            if (!self::isNumberTaken($number)) {
+                update_user_meta($userId, self::USER_META_NUMBER, $number);
+
+                return $number;
+            }
+
+            error_log(sprintf(
+                '[mk-marketplace] creator number %s is already held; the sequence counter '
+                . 'is behind issued numbers, skipping forward',
+                $number
+            ));
         }
 
-        update_user_meta($userId, self::USER_META_NUMBER, $number);
+        error_log(sprintf('[mk-marketplace] gave up allocating a number for user %d', $userId));
 
-        return $number;
+        return '';
+    }
+
+    /** Is any account already holding this number? */
+    public static function isNumberTaken(string $number): bool
+    {
+        global $wpdb;
+
+        return (bool) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT 1 FROM {$wpdb->usermeta}
+                  WHERE meta_key = %s AND meta_value = %s LIMIT 1",
+                self::USER_META_NUMBER,
+                $number
+            )
+        );
     }
 
     // ------------------------------------------------------------- dashboard

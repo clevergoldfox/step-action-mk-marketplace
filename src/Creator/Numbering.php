@@ -133,8 +133,24 @@ final class Numbering
         return (bool) preg_match('/^[' . self::LETTERS . ']\d{5}$/', $candidate);
     }
 
+    /**
+     * Turn whatever a person typed into the canonical form, A00001.
+     *
+     * Uppercasing alone was not enough for Japanese input. An IME in its
+     * default mode produces FULL-WIDTH characters, so a buyer typing a number
+     * they read off a flyer very often sends "Ａ００００１" — which matches
+     * nothing, and looks to them exactly like "that creator does not exist".
+     * People also copy numbers with separators ("A-00001", "A 00001").
+     *
+     * mb_convert_kana 'as' folds full-width letters, digits and spaces to
+     * their half-width forms before anything else is checked.
+     */
     public static function normalise(string $input): string
     {
-        return strtoupper(trim($input));
+        if (function_exists('mb_convert_kana')) {
+            $input = mb_convert_kana($input, 'as', 'UTF-8');
+        }
+
+        return strtoupper((string) preg_replace('/[\s\-‐－ー_]+/u', '', trim($input)));
     }
 }

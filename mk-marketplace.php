@@ -109,12 +109,14 @@ add_action('plugins_loaded', static function (): void {
         Install\Migrator::run();
     }
 
+    I18n\DokanTranslations::register();
     Order\Statuses::register();
     Order\Transitions::register();
     Order\Guard::register();
     Order\Shipping::register();
     Order\Receipt::register();
     Creator\Onboarding::register();
+    Creator\Search::register();
     Checkout\Controller::register();
     Notify\Events::register();
     Option\Admin::register();

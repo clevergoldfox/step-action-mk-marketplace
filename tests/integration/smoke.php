@@ -1223,6 +1223,55 @@ if (is_wp_error($wgSeller)) {
     check('widget fixtures removed', !get_userdata($wgSeller));
 }
 
+echo "\n=== creator numbers: unique, and findable by search ===\n";
+global $wpdb;
+
+// The property that matters most. Three accounts once held A00001 because a
+// test rolled the counter back after a crashed script left its user behind.
+$dupes = (int) $wpdb->get_var(
+    "SELECT COUNT(*) FROM (SELECT meta_value FROM {$wpdb->usermeta}
+      WHERE meta_key = 'mk_creator_number' GROUP BY meta_value HAVING COUNT(*) > 1) d");
+check('no creator number held twice', $dupes === 0, $dupes . ' duplicated');
+
+// Normalisation: what people actually type.
+foreach (['A00001', 'a00001', 'Ａ００００１', 'A-00001', ' A 00001 '] as $in) {
+    check('normalises ' . $in, MK\Creator\Numbering::normalise($in) === 'A00001',
+        MK\Creator\Numbering::normalise($in));
+}
+foreach (['A0001', 'I00001', 'マグカップ'] as $in) {
+    check('not a number: ' . $in,
+        !MK\Creator\Numbering::isCreatorNumber(MK\Creator\Numbering::normalise($in)));
+}
+
+$scUser = wp_insert_user(['user_login' => 'mk_smoke_sc_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($scUser)) {
+    check('create search fixture', false, $scUser->get_error_message());
+} else {
+    $seq = get_option('mk_creator_seq');
+    $num = MK\Creator\Onboarding::ensureNumber($scUser);
+
+    $found = MK\Creator\Search::findByNumber($num);
+    check('found by its own number', $found && $found->ID === $scUser, $num);
+    $fw = mb_convert_kana($num, 'A', 'UTF-8');   // back to full-width
+    $found = MK\Creator\Search::findByNumber($fw);
+    check('found by full-width number', $found && $found->ID === $scUser, $fw);
+    check('unknown number finds nobody', MK\Creator\Search::findByNumber('Z99999') === null);
+
+    // The guard: wind the counter back so the next allocation would collide.
+    update_option('mk_creator_seq', (string) ((int) get_option('mk_creator_seq') - 1));
+    $other = wp_insert_user(['user_login' => 'mk_smoke_sc2_' . wp_rand(1000,9999),
+        'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+    $second = MK\Creator\Onboarding::ensureNumber($other);
+    check('counter behind: still no reuse', $second !== '' && $second !== $num, "$num then $second");
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($scUser); wp_delete_user($other);
+    update_option('mk_creator_seq', $seq);
+    check('search fixtures removed', !get_userdata($scUser));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
