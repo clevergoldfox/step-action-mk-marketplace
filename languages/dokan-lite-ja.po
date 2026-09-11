@@ -1,0 +1,1319 @@
+# Japanese translation of the Dokan Lite screens creators use.
+#
+# Dokan Lite ships no Japanese language pack — `wp language plugin install
+# dokan-lite ja` reports "Language 'ja' not available" — so on a site whose
+# locale is ja every seller-facing screen was in English. A client testing the
+# listing flow could not find their live products because the tab reads
+# "Live", not 「出品中」.
+#
+# Scope is the 355 strings referenced by the product, order, dashboard and
+# settings templates and the dashboard navigation, not all 3,727 in the POT.
+# Untranslated strings fall back to English, so anything missed degrades to
+# what was there before rather than breaking.
+#
+# Shipped inside the mk-marketplace plugin and loaded from there, so it is
+# versioned and deployed with the code that depends on it rather than living
+# as an untracked file on one server. If an official Japanese pack ever
+# appears it loads first and these strings only fill its gaps.
+msgid ""
+msgstr ""
+"Project-Id-Version: dokan-lite (MK Marketplace partial)\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Settings"
+msgstr "設定"
+
+msgid "Dashboard"
+msgstr "ダッシュボード"
+
+msgid "Withdraw"
+msgstr "出金"
+
+msgid "Status"
+msgstr "状態"
+
+msgid "Vendor"
+msgstr "出品者"
+
+msgid "Commission"
+msgstr "手数料"
+
+msgid "Fixed"
+msgstr "固定"
+
+msgid "Completed"
+msgstr "完了"
+
+msgid "Processing"
+msgstr "処理中"
+
+msgid "On Hold"
+msgstr "保留中"
+
+msgid "Store"
+msgstr "ショップ"
+
+msgid "Payment"
+msgstr "支払い"
+
+msgid "Upload banner"
+msgstr "バナーをアップロード"
+
+msgid "Upload a banner for your store. Banner size is (%1$sx%2$s) pixels."
+msgstr "ショップのバナー画像をアップロードしてください。推奨サイズは %1$s×%2$s ピクセルです。"
+
+msgid "Store Name"
+msgstr "ショップ名"
+
+msgid "Date"
+msgstr "日付"
+
+msgid "You have no permission to do this action"
+msgstr "この操作を行う権限がありません"
+
+msgid "Are you cheating?"
+msgstr "不正な操作です"
+
+msgid "Delete note"
+msgstr "メモを削除"
+
+msgid "Are you sure?"
+msgstr "よろしいですか？"
+
+msgid "To"
+msgstr "終了"
+
+msgid "From"
+msgstr "開始"
+
+msgid "Apply"
+msgstr "適用"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "Close"
+msgstr "閉じる"
+
+msgid "Update Settings"
+msgstr "設定を保存"
+
+msgid "In Stock"
+msgstr "在庫あり"
+
+msgid "Out of Stock"
+msgstr "在庫なし"
+
+msgid "Do not allow"
+msgstr "許可しない"
+
+msgid "Allow"
+msgstr "許可する"
+
+msgid "Select tags/Add tags"
+msgstr "タグを選択／追加"
+
+msgid "Select product tags"
+msgstr "商品タグを選択"
+
+msgid "Check to remove Add to Cart option from your products."
+msgstr "チェックすると、商品の購入ボタンを非表示にします。"
+
+msgid "Check to hide product price from your products."
+msgstr "チェックすると、商品の価格を非表示にします。"
+
+msgid "Pending"
+msgstr "支払い待ち"
+
+msgid "Cancelled"
+msgstr "キャンセル"
+
+msgid "Refunded"
+msgstr "返金済み"
+
+msgid "%1$s (%2$s)"
+msgstr "%1$s（%2$s）"
+
+msgid "No order data found with given order id."
+msgstr "指定された注文が見つかりません。"
+
+msgid "You have no permission to view this order"
+msgstr "この注文を表示する権限がありません"
+
+msgid "Nonce verification failed!"
+msgstr "セキュリティ確認に失敗しました。ページを再読み込みしてください。"
+
+msgid "Bulk Actions"
+msgstr "一括操作"
+
+msgid "Change status to on-hold"
+msgstr "状態を「保留中」に変更"
+
+msgid "Change status to processing"
+msgstr "状態を「処理中」に変更"
+
+msgid "Change status to completed"
+msgstr "状態を「完了」に変更"
+
+msgid "You have no permission to view this page"
+msgstr "このページを表示する権限がありません"
+
+msgid "Delete Permanently"
+msgstr "完全に削除"
+
+msgid "Details of your product ..."
+msgstr "商品の詳細…"
+
+msgid "Please enter product title"
+msgstr "商品名を入力してください"
+
+msgid "Please select a category"
+msgstr "カテゴリーを選択してください"
+
+msgid "Please select at least one category"
+msgstr "カテゴリーを1つ以上選択してください"
+
+msgid "No product found!"
+msgstr "商品が見つかりません"
+
+msgid "I swear this is not your product!"
+msgstr "この商品を編集する権限がありません"
+
+msgid "You can only select %s tags"
+msgstr "タグは %s 個まで選択できます"
+
+msgid "You have a reverse withdrawal balance of %1$s to be paid. Please <a href=\"%2$s\">pay</a> it before %3$s. Below actions will be taken after the billing period is over. %4$s"
+msgstr "未払いの残高 %1$s があります。%3$s までに<a href=\"%2$s\">お支払い</a>ください。期限を過ぎると以下の措置が取られます。%4$s"
+
+msgid "Below actions have been taken due to unpaid reverse withdrawal balance: %1$s Kindly <a href=\"%2$s\">pay</a> your due to start selling again."
+msgstr "未払いの残高があるため、以下の措置が取られています：%1$s 販売を再開するには<a href=\"%2$s\">お支払い</a>ください。"
+
+msgid "Are you sure you want to pay this amount?"
+msgstr "この金額を支払いますか？"
+
+msgid "Something went wrong."
+msgstr "問題が発生しました。"
+
+msgid "Success."
+msgstr "完了しました。"
+
+msgid "Payment Method"
+msgstr "受取方法"
+
+msgid "These are the withdraw methods available for you. Please update your payment information below to submit withdraw requests and get your store payments seamlessly."
+msgstr "ご利用いただける受取方法です。"
+
+msgid "No withdraw method is available. Please contact site admin."
+msgstr "利用できる受取方法がありません。運営までお問い合わせください。"
+
+msgid "Invalid withdraw method. Please contact site admin"
+msgstr "受取方法が正しくありません。運営までお問い合わせください"
+
+msgid "Pemission denied social"
+msgstr "権限がありません"
+
+msgid "Pemission denied"
+msgstr "権限がありません"
+
+msgid "Failed to process data, invalid submission"
+msgstr "送信内容に誤りがあるため処理できませんでした"
+
+msgid "Your information has been saved successfully"
+msgstr "保存しました"
+
+msgid "Store type required"
+msgstr "ショップの種類を選択してください"
+
+msgid "Invalid email"
+msgstr "メールアドレスが正しくありません"
+
+msgid "Store name required"
+msgstr "ショップ名を入力してください"
+
+msgid "Please add Terms & Conditions content before saving the settings."
+msgstr "保存する前に、利用規約の内容を入力してください。"
+
+msgid "Invalid Account Type"
+msgstr "口座種別が正しくありません"
+
+msgid "You must attest that the bank account is yours."
+msgstr "ご本人名義の口座であることを確認してください。"
+
+msgid "Book"
+msgstr "書籍"
+
+msgid "Dress"
+msgstr "衣類"
+
+msgid "Electronic"
+msgstr "電子機器"
+
+msgid "Bank Account Settings"
+msgstr "銀行口座の設定"
+
+msgid "Paypal Settings"
+msgstr "PayPal の設定"
+
+msgid "Missing withdraw id."
+msgstr "出金IDが指定されていません。"
+
+msgid "Your account is not enabled for selling, please contact the admin"
+msgstr "このアカウントでは現在出品できません。運営までお問い合わせください"
+
+msgid "Your request has been cancelled successfully!"
+msgstr "申請を取り消しました"
+
+msgid "Your request has been received successfully and being reviewed!"
+msgstr "申請を受け付けました。確認をお待ちください"
+
+msgid "Unknown error!"
+msgstr "不明なエラーが発生しました"
+
+msgid "Sorry, no transactions were found!"
+msgstr "取引履歴はまだありません"
+
+msgid "You do not have any approved withdraw yet."
+msgstr "承認済みの出金はまだありません。"
+
+msgid "%1$s on %2$s to %3$s"
+msgstr "%2$s に %1$s を %3$s へ"
+
+msgid "You have already withdrawn %s. This amount will be deducted from your balance."
+msgstr "すでに %s を出金済みです。この金額は残高から差し引かれます。"
+
+msgid "You already have pending withdraw request(s). Please submit your request after approval or cancellation of your previous request."
+msgstr "処理中の出金申請があります。前回の申請が完了してから再度お申し込みください。"
+
+msgid "You don't have sufficient balance for a withdraw request!"
+msgstr "出金できる残高がありません"
+
+msgid "N/A"
+msgstr "—"
+
+msgid "Products"
+msgstr "商品"
+
+msgid "Orders"
+msgstr "注文"
+
+msgid "No Title"
+msgstr "（無題）"
+
+msgid "Visit Store"
+msgstr "ショップを見る"
+
+msgid "Edit Account"
+msgstr "アカウント設定"
+
+msgid "Log out"
+msgstr "ログアウト"
+
+msgid "Pending Review"
+msgstr "審査待ち"
+
+msgid "Scheduled"
+msgstr "予約済み"
+
+msgid "Terms and Conditions"
+msgstr "利用規約"
+
+msgid "Simple"
+msgstr "通常商品"
+
+msgid "Order"
+msgstr "注文"
+
+msgid "(no name)"
+msgstr "（名前なし）"
+
+msgid "Order Items"
+msgstr "注文商品"
+
+msgid "Order Total"
+msgstr "合計金額"
+
+msgid "Address"
+msgstr "住所"
+
+msgid "City"
+msgstr "市区町村"
+
+msgid "Inventory"
+msgstr "在庫"
+
+msgid "Stock"
+msgstr "在庫"
+
+msgid "Search"
+msgstr "検索"
+
+msgid "Hidden"
+msgstr "非表示"
+
+msgid "View"
+msgstr "表示"
+
+msgid "SKU:"
+msgstr "商品番号："
+
+msgid "Title"
+msgstr "商品名"
+
+msgid "Product Type"
+msgstr "商品タイプ"
+
+msgid "Choose Variable if your product has multiple attributes - like sizes, colors, quality etc"
+msgstr "サイズや色など複数の種類がある場合は「バリエーション商品」を選択してください"
+
+msgid "Price"
+msgstr "価格"
+
+msgid "Tags"
+msgstr "タグ"
+
+msgid "Short Description"
+msgstr "簡単な説明"
+
+msgid "Description"
+msgstr "商品説明"
+
+msgid "Downloadable"
+msgstr "ダウンロード商品"
+
+msgid "Downloadable products give access to a file upon purchase."
+msgstr "購入後にファイルをダウンロードできる商品です。"
+
+msgid "Virtual"
+msgstr "配送なし"
+
+msgid "SKU"
+msgstr "商品番号"
+
+msgid "Stock Status"
+msgstr "在庫状況"
+
+msgid "Stock quantity"
+msgstr "在庫数"
+
+msgid "Low stock threshold"
+msgstr "在庫僅少のしきい値"
+
+msgid "Allow Backorders"
+msgstr "在庫切れ時の注文受付"
+
+msgid "Downloadable Options"
+msgstr "ダウンロードの設定"
+
+msgid "Configure your downloadable product settings"
+msgstr "ダウンロード商品の設定を行います"
+
+msgid "Download Limit"
+msgstr "ダウンロード回数の上限"
+
+msgid "Unlimited"
+msgstr "無制限"
+
+msgid "Download Expiry"
+msgstr "ダウンロード期限"
+
+msgid "Never"
+msgstr "なし"
+
+msgid "Other Options"
+msgstr "その他の設定"
+
+msgid "Set your extra product options"
+msgstr "商品の追加設定を行います"
+
+msgid "Visibility"
+msgstr "公開範囲"
+
+msgid "Purchase Note"
+msgstr "購入者へのメッセージ"
+
+msgid "Enable product reviews"
+msgstr "商品レビューを受け付ける"
+
+msgid "Total"
+msgstr "合計"
+
+msgid "Update"
+msgstr "更新"
+
+msgid "Email"
+msgstr "メールアドレス"
+
+msgid "Street address"
+msgstr "番地"
+
+msgid "Store Open Notice"
+msgstr "営業中の表示"
+
+msgid "Store Close Notice"
+msgstr "休業中の表示"
+
+msgid "This is required"
+msgstr "必須項目です"
+
+msgid "Street 2"
+msgstr "建物名・部屋番号"
+
+msgid "Map"
+msgstr "地図"
+
+msgid "Show email address in store"
+msgstr "ショップにメールアドレスを表示する"
+
+msgid "Store is open"
+msgstr "営業中"
+
+msgid "Store is closed"
+msgstr "休業中"
+
+msgid "Email address"
+msgstr "メールアドレス"
+
+msgid "— No change —"
+msgstr "— 変更しない —"
+
+msgid "Disconnect"
+msgstr "連携を解除"
+
+msgid "Net Sales"
+msgstr "純売上"
+
+msgid "Earning"
+msgstr "受取額"
+
+msgid "Pageview"
+msgstr "閲覧数"
+
+msgid "Edit Account Details"
+msgstr "アカウント情報の編集"
+
+msgid "First name"
+msgstr "名"
+
+msgid "Last name"
+msgstr "姓"
+
+msgid "Password Change"
+msgstr "パスワードの変更"
+
+msgid "Current Password (leave blank to leave unchanged)"
+msgstr "現在のパスワード（変更しない場合は空欄）"
+
+msgid "New Password (leave blank to leave unchanged)"
+msgstr "新しいパスワード（変更しない場合は空欄）"
+
+msgid "Confirm New Password"
+msgstr "新しいパスワード（確認）"
+
+msgid "Save changes"
+msgstr "変更を保存"
+
+msgid "On hold"
+msgstr "保留中"
+
+msgid "+ Add new product"
+msgstr "＋ 新しく出品する"
+
+msgid "Live"
+msgstr "出品中"
+
+msgid "Offline"
+msgstr "非公開"
+
+msgid "Sales this Month"
+msgstr "今月の売上"
+
+msgid "Billing Address"
+msgstr "請求先住所"
+
+msgid "Shipping Address"
+msgstr "お届け先"
+
+msgid "Error!"
+msgstr "エラー"
+
+msgid "Type"
+msgstr "種類"
+
+msgid "Rate"
+msgstr "料率"
+
+msgid "Qty"
+msgstr "数量"
+
+msgid "Variation ID:"
+msgstr "バリエーションID："
+
+msgid "%s (No longer exists)"
+msgstr "%s（削除済み）"
+
+msgid "Source: %s"
+msgstr "出典：%s"
+
+msgid "Net total:"
+msgstr "純合計："
+
+msgid "Vendor earning:"
+msgstr "出品者の受取額："
+
+msgid "Subsidy:"
+msgstr "補助金："
+
+msgid "Shipping Fee:"
+msgstr "送料："
+
+msgid "Product Tax Fee:"
+msgstr "商品の税額："
+
+msgid "Shipping Tax Fee:"
+msgstr "送料の税額："
+
+msgid "Gateway Fee:"
+msgstr "決済手数料："
+
+msgid "Total commission:"
+msgstr "手数料合計："
+
+msgid "Filter by registered customer"
+msgstr "購入者で絞り込み"
+
+msgid "Search Orders"
+msgstr "注文を検索"
+
+msgid "Select Date Range"
+msgstr "期間を選択"
+
+msgid "Start Date"
+msgstr "開始日"
+
+msgid "End Date"
+msgstr "終了日"
+
+msgid "Filter"
+msgstr "絞り込み"
+
+msgid "Reset"
+msgstr "リセット"
+
+msgid "Export All"
+msgstr "すべて書き出し"
+
+msgid "Export Filtered"
+msgstr "絞り込み結果を書き出し"
+
+msgid "This is not yours, I swear!"
+msgstr "この操作を行う権限がありません"
+
+msgid "Item"
+msgstr "商品"
+
+msgid "Totals"
+msgstr "合計"
+
+msgid "Coupons"
+msgstr "クーポン"
+
+msgid "No billing address set."
+msgstr "請求先住所は登録されていません。"
+
+msgid "No shipping address set."
+msgstr "お届け先は登録されていません。"
+
+msgid "Downloadable Product Permission"
+msgstr "ダウンロード権限"
+
+msgid "General Details"
+msgstr "基本情報"
+
+msgid "Order Status:"
+msgstr "注文状況："
+
+msgid "&nbsp; Edit"
+msgstr "&nbsp; 編集"
+
+msgid "Order Date:"
+msgstr "注文日："
+
+msgid "Earning From Order:"
+msgstr "この注文の受取額："
+
+msgid "Customer:"
+msgstr "購入者："
+
+msgid "Email:"
+msgstr "メール："
+
+msgid "Phone:"
+msgstr "電話番号："
+
+msgid "Customer IP:"
+msgstr "購入者IP："
+
+msgid "Customer Note:"
+msgstr "購入者からの連絡事項："
+
+msgid "Order Notes"
+msgstr "注文メモ"
+
+msgid "added %s ago"
+msgstr "%s前に追加"
+
+msgid "There are no notes for this order yet."
+msgstr "この注文のメモはまだありません。"
+
+msgid "Add note"
+msgstr "メモを追加"
+
+msgid "Customer note"
+msgstr "購入者へのメモ"
+
+msgid "Private note"
+msgstr "非公開メモ"
+
+msgid "Add Note"
+msgstr "メモを追加"
+
+msgid "Tracking Number"
+msgstr "追跡番号"
+
+msgid "Shipping Provider Name / URL"
+msgstr "配送業者名／URL"
+
+msgid "Date Shipped"
+msgstr "発送日"
+
+msgid "Add Tracking Details"
+msgstr "追跡情報を追加"
+
+msgid "Search for a downloadable product&hellip;"
+msgstr "ダウンロード商品を検索&hellip;"
+
+msgid "Grant Access"
+msgstr "アクセスを許可"
+
+msgid "Select bulk action"
+msgstr "一括操作を選択"
+
+msgid "Customer"
+msgstr "購入者"
+
+msgid "Shipment"
+msgstr "発送"
+
+msgid "Action"
+msgstr "操作"
+
+msgid "Order %s"
+msgstr "注文 %s"
+
+msgid "Guest"
+msgstr "ゲスト"
+
+msgid "Unpublished"
+msgstr "非公開"
+
+msgid "%s ago"
+msgstr "%s前"
+
+msgid "Shipping Status"
+msgstr "発送状況"
+
+msgid "Are you sure you want to mark this order as processing?"
+msgstr "この注文を「処理中」にしますか？"
+
+msgid "Complete"
+msgstr "完了"
+
+msgid "Are you sure you want to mark this order as completed?"
+msgstr "この注文を「完了」にしますか？"
+
+msgid "No orders found"
+msgstr "注文はまだありません"
+
+msgid "File %1$s: %2$s"
+msgstr "ファイル %1$s：%2$s"
+
+msgid "Revoke Access"
+msgstr "アクセスを取り消す"
+
+msgid "Downloaded"
+msgstr "ダウンロード済み"
+
+msgid "Downloads Remaining"
+msgstr "残りダウンロード回数"
+
+msgid "Access Expires"
+msgstr "アクセス期限"
+
+msgid "Fee Name"
+msgstr "手数料名"
+
+msgid "Tax Rate:"
+msgstr "税率："
+
+msgid "Sales Tax:"
+msgstr "消費税："
+
+msgid "Shipping Tax:"
+msgstr "送料の税："
+
+msgid "&larr; Orders"
+msgstr "&larr; 注文一覧"
+
+msgid "(Parent order)"
+msgstr "（親注文）"
+
+msgid "Add New Product"
+msgstr "新しく出品する"
+
+msgid "Catalog Mode"
+msgstr "カタログモード"
+
+msgid "Enable/Disable Catalog Mode for this product"
+msgstr "この商品のカタログモードを切り替えます"
+
+msgid "Category"
+msgstr "カテゴリー"
+
+msgid "- Select a category -"
+msgstr "- カテゴリーを選択 -"
+
+msgid "+ Add new category"
+msgstr "＋ カテゴリーを追加"
+
+msgid "Add new category"
+msgstr "カテゴリーを追加"
+
+msgid "Please choose the right category for this product"
+msgstr "商品に合ったカテゴリーを選択してください"
+
+msgid "Search category"
+msgstr "カテゴリーを検索"
+
+msgid "Selected: "
+msgstr "選択中： "
+
+msgid "No category"
+msgstr "カテゴリーなし"
+
+msgid "Done"
+msgstr "完了"
+
+msgid "Change to:"
+msgstr "変更後："
+
+msgid "Virtual products are intangible and aren't shipped."
+msgstr "配送を伴わない商品です。"
+
+msgid "Add File"
+msgstr "ファイルを追加"
+
+msgid "Name"
+msgstr "名前"
+
+msgid "This is the name of the download shown to the customer."
+msgstr "購入者に表示されるダウンロード名です。"
+
+msgid "File URL"
+msgstr "ファイルURL"
+
+msgid "This is the URL or absolute path to the file which customers will get access to."
+msgstr "購入者がアクセスするファイルのURLまたはパスです。"
+
+msgid "Access Denied, No product found"
+msgstr "アクセスできません。商品が見つかりません"
+
+msgid "This product is no longer available"
+msgstr "この商品は現在ご利用いただけません"
+
+msgid "Access Denied"
+msgstr "アクセスできません"
+
+msgid "Edit Product"
+msgstr "商品を編集"
+
+msgid "View Product"
+msgstr "商品ページを見る"
+
+msgid "Success!"
+msgstr "完了しました"
+
+msgid "The product has been saved successfully."
+msgstr "商品を保存しました。"
+
+msgid "View Product &rarr;"
+msgstr "商品ページを見る &rarr;"
+
+msgid "Product name.."
+msgstr "商品名"
+
+msgid "Please enter product title!"
+msgstr "商品名を入力してください"
+
+msgid " You Earn : "
+msgstr " 受取額の目安： "
+
+msgid "Discounted Price"
+msgstr "セール価格"
+
+msgid "Schedule"
+msgstr "期間を設定"
+
+msgid "Product price can't be less than the vendor fee!"
+msgstr "価格が手数料を下回っています"
+
+msgid "YYYY-MM-DD"
+msgstr "YYYY-MM-DD"
+
+msgid "Upload a product cover image"
+msgstr "メイン画像をアップロード"
+
+msgid "Delete image"
+msgstr "画像を削除"
+
+msgid "Add gallery image"
+msgstr "画像を追加"
+
+msgid "Save Product"
+msgstr "商品を保存"
+
+msgid "Manage inventory for this product."
+msgstr "この商品の在庫を管理する"
+
+msgid "(Stock Keeping Unit)"
+msgstr "（管理用の番号）"
+
+msgid "On Backorder"
+msgstr "取り寄せ中"
+
+msgid "Enable product stock management"
+msgstr "在庫管理を有効にする"
+
+msgid "1"
+msgstr "1"
+
+msgid "Allow but notify customer"
+msgstr "許可して購入者に通知"
+
+msgid "Allow only one quantity of this product to be bought in a single order"
+msgstr "1回の注文で1点のみ購入可能にする"
+
+msgid "Product type"
+msgstr "商品タイプ"
+
+msgid "- Select a brand -"
+msgstr "- ブランドを選択 -"
+
+msgid "Search Products"
+msgstr "商品を検索"
+
+msgid "All (%s)"
+msgstr "すべて（%s）"
+
+msgid "In stock"
+msgstr "在庫あり"
+
+msgid "Out of stock"
+msgstr "在庫なし"
+
+msgid "You have successfully created %s product"
+msgstr "%s 件の商品を作成しました"
+
+msgid "Upload Product Image"
+msgstr "商品画像をアップロード"
+
+msgid "Short description of the product..."
+msgstr "商品の簡単な説明…"
+
+msgid "Add your product description"
+msgstr "商品の説明を入力してください"
+
+msgid "Create & Add New"
+msgstr "作成して続けて出品"
+
+msgid "Create Product"
+msgstr "出品する"
+
+msgid "Product Status"
+msgstr "公開状態"
+
+msgid "Customer will get this info in their order email"
+msgstr "購入者への注文メールに記載されます"
+
+msgid "Brand"
+msgstr "ブランド"
+
+msgid "Select brand"
+msgstr "ブランドを選択"
+
+msgid "Image"
+msgstr "画像"
+
+msgid "Grouped"
+msgstr "グループ商品"
+
+msgid "External/Affiliate"
+msgstr "外部リンク商品"
+
+msgid "Variable"
+msgstr "バリエーション商品"
+
+msgid "Views"
+msgstr "閲覧数"
+
+msgid "Published"
+msgstr "出品中"
+
+msgid "Missed schedule"
+msgstr "予約公開の失敗"
+
+msgid "Last Modified"
+msgstr "最終更新"
+
+msgid "Add new product"
+msgstr "新しく出品する"
+
+msgid "No product found"
+msgstr "商品が見つかりません"
+
+msgid "&laquo; Previous"
+msgstr "&laquo; 前へ"
+
+msgid "Next &raquo;"
+msgstr "次へ &raquo;"
+
+msgid "No Products Found!"
+msgstr "まだ商品がありません"
+
+msgid "Ready to start selling something awesome?"
+msgstr "さっそく出品してみましょう"
+
+msgid "Enter some short description about this product..."
+msgstr "商品の簡単な説明を入力してください…"
+
+msgid "Create product"
+msgstr "出品する"
+
+msgid "Create & add new"
+msgstr "作成して続けて出品"
+
+msgid "Street "
+msgstr "番地 "
+
+msgid "Apartment, suite, unit etc. (optional)"
+msgstr "建物名・部屋番号（任意）"
+
+msgid "Town / City"
+msgstr "市区町村"
+
+msgid "Post/ZIP Code"
+msgstr "郵便番号"
+
+msgid "Postcode / Zip"
+msgstr "郵便番号"
+
+msgid "Country "
+msgstr "国 "
+
+msgid "State "
+msgstr "都道府県 "
+
+msgid "Please Select..."
+msgstr "選択してください…"
+
+msgid "Personal"
+msgstr "個人"
+
+msgid "Business"
+msgstr "法人"
+
+msgid "bank check"
+msgstr "銀行小切手"
+
+msgid "Back"
+msgstr "戻る"
+
+msgid "Payment Methods"
+msgstr "受取方法"
+
+msgid "Add Payment Method"
+msgstr "受取方法を追加"
+
+msgid "Direct to %s"
+msgstr "%s へ直接"
+
+msgid "There is no payment method to add."
+msgstr "追加できる受取方法はありません。"
+
+msgid "Manage"
+msgstr "管理"
+
+msgid "There is no payment method to show."
+msgstr "表示できる受取方法はありません。"
+
+msgid "Open"
+msgstr "営業中"
+
+msgid "Profile Picture"
+msgstr "プロフィール画像"
+
+msgid "Upload Photo"
+msgstr "写真をアップロード"
+
+msgid "store name"
+msgstr "ショップ名"
+
+msgid "Phone No"
+msgstr "電話番号"
+
+msgid "+123456.."
+msgstr "例：09012345678"
+
+msgid "Show terms and conditions in store page"
+msgstr "ショップページに利用規約を表示する"
+
+msgid "TOC Details"
+msgstr "利用規約の内容"
+
+msgid "Store Schedule"
+msgstr "営業スケジュール"
+
+msgid "Store has open close time"
+msgstr "営業時間を設定する"
+
+# ---------------------------------------------------------------------------
+# Second pass: strings from Dokan's includes/ rather than its templates.
+# The first pass covered templates only, and a logged-in check of the real
+# product list still showed "Edit" on every row and "Publish" as a status —
+# row actions and status labels are built in PHP, not in the templates.
+# ---------------------------------------------------------------------------
+
+msgid "Invalid nonce"
+msgstr "セキュリティ確認に失敗しました。ページを再読み込みしてください。"
+
+msgid "Shipping"
+msgstr "配送"
+
+msgid "Available"
+msgstr "利用可能"
+
+msgid "You don't have enough permission"
+msgstr "この操作を行う権限がありません"
+
+msgid "Nonce verification failed"
+msgstr "セキュリティ確認に失敗しました。ページを再読み込みしてください。"
+
+msgid "Something wrong, please try again later"
+msgstr "問題が発生しました。時間をおいて再度お試しください"
+
+msgid "You do not have sufficient permissions to access this page."
+msgstr "このページを表示する権限がありません。"
+
+msgid "You have taken too long. Please go back and retry."
+msgstr "時間が経過しすぎました。前の画面に戻ってやり直してください。"
+
+msgid "You do not have permission to change this order"
+msgstr "この注文を変更する権限がありません"
+
+msgid "You have no permission to manage this order"
+msgstr "この注文を管理する権限がありません"
+
+msgid "Invalid order."
+msgstr "注文が正しくありません。"
+
+msgid "Please provide your name."
+msgstr "お名前を入力してください。"
+
+msgid "Please provide your email."
+msgstr "メールアドレスを入力してください。"
+
+msgid "Something went wrong!"
+msgstr "問題が発生しました"
+
+msgid "reCAPTCHA verification failed!"
+msgstr "reCAPTCHA の確認に失敗しました"
+
+msgid "Email sent successfully!"
+msgstr "メールを送信しました"
+
+msgid "Shipping provider: "
+msgstr "配送業者： "
+
+msgid "Shipping number: "
+msgstr "追跡番号： "
+
+msgid "Shipped date: "
+msgstr "発送日： "
+
+msgid "Delete"
+msgstr "削除"
+
+msgid "Error: Nonce verification failed"
+msgstr "エラー：セキュリティ確認に失敗しました"
+
+msgid "Image could not be processed. Please go back and try again."
+msgstr "画像を処理できませんでした。前の画面に戻ってやり直してください。"
+
+msgid "Please Login to Continue"
+msgstr "続けるにはログインしてください"
+
+msgid "Invalid username or password."
+msgstr "ユーザー名またはパスワードが正しくありません。"
+
+msgid "Wrong username or password."
+msgstr "ユーザー名またはパスワードが正しくありません。"
+
+msgid "User logged in successfully."
+msgstr "ログインしました。"
+
+msgid "id param is required"
+msgstr "IDが指定されていません"
+
+msgid "Publish"
+msgstr "出品中"
+
+msgid "Draft"
+msgstr "下書き"
+
+msgid "Sorry, You can not modify another vendor's product !"
+msgstr "他の出品者の商品は編集できません"
+
+msgid "Add variation"
+msgstr "バリエーションを追加"
+
+msgid "Create variations from all attributes"
+msgstr "すべての属性からバリエーションを作成"
+
+msgid "Delete all variations"
+msgstr "すべてのバリエーションを削除"
+
+msgid "Toggle &quot;Enabled&quot;"
+msgstr "&quot;有効&quot;を切り替え"
+
+msgid "Toggle &quot;Downloadable&quot;"
+msgstr "&quot;ダウンロード商品&quot;を切り替え"
+
+msgid "Toggle &quot;Virtual&quot;"
+msgstr "&quot;配送なし&quot;を切り替え"
+
+msgid "Pricing"
+msgstr "価格設定"
+
+msgid "Set regular prices"
+msgstr "通常価格を設定"
+
+msgid "Increase regular prices (fixed amount or percentage)"
+msgstr "通常価格を上げる（金額または割合）"
+
+msgid "Decrease regular prices (fixed amount or percentage)"
+msgstr "通常価格を下げる（金額または割合）"
+
+msgid "Set sale prices"
+msgstr "セール価格を設定"
+
+msgid "Increase sale prices (fixed amount or percentage)"
+msgstr "セール価格を上げる（金額または割合）"
+
+msgid "Decrease sale prices (fixed amount or percentage)"
+msgstr "セール価格を下げる（金額または割合）"
+
+msgid "Set scheduled sale dates"
+msgstr "セール期間を設定"
+
+msgid "Toggle &quot;Manage stock&quot;"
+msgstr "&quot;在庫管理&quot;を切り替え"
+
+msgid "Length"
+msgstr "長さ"
+
+msgid "Width"
+msgstr "幅"
+
+msgid "Height"
+msgstr "高さ"
+
+msgid "Weight"
+msgstr "重さ"
+
+msgid "Downloadable products"
+msgstr "ダウンロード商品"
+
+msgid "Download limit"
+msgstr "ダウンロード回数の上限"
+
+msgid "Download expiry"
+msgstr "ダウンロード期限"
+
+msgid "Go"
+msgstr "実行"
+
+msgid "Default Form Values: These are the attributes that will be pre-selected on the frontend."
+msgstr "初期選択：購入画面であらかじめ選択される属性です。"
+
+msgid "No default"
+msgstr "初期選択なし"
+
+msgid "Save Variations"
+msgstr "バリエーションを保存"
+
+msgid "Expand"
+msgstr "展開"
+
+msgid "Go to the first page"
+msgstr "最初のページへ"
+
+msgid "Go to the previous page"
+msgstr "前のページへ"
+
+msgid "Select Page"
+msgstr "ページを選択"
+
+msgid "Current page"
+msgstr "現在のページ"
+
+msgid "of"
+msgstr "／"
+
+msgid "Go to the next page"
+msgstr "次のページへ"
+
+msgid "Go to the last page"
+msgstr "最後のページへ"
+
+msgid "Visible"
+msgstr "表示"
+
+msgid "Catalog"
+msgstr "一覧のみ"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "Default sorting"
+msgstr "標準の並び順"
+
+msgid "Sort by popularity"
+msgstr "人気順"
+
+msgid "Sort by average rating"
+msgstr "評価順"
+
+msgid "Sort by latest"
+msgstr "新着順"
+
+msgid "Sort by price: low to high"
+msgstr "価格の安い順"
+
+msgid "Sort by price: high to low"
+msgstr "価格の高い順"
+
+msgid "Relevance"
+msgstr "関連度順"
