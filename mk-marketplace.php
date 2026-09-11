@@ -129,6 +129,7 @@ add_action('plugins_loaded', static function (): void {
     Product\PublishGate::register();
     Product\Approval::register();
     Schedule\Jobs::register();
+    Line\Links::register();
 
     // The webhook route is only exposed once keys are present. Registering it
     // without a signing secret would create an endpoint that rejects
