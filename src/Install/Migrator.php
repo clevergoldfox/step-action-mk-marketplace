@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 6;
+    public const SCHEMA_VERSION = 7;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -185,6 +185,7 @@ final class Migrator
         self::seedCarriers();
         self::splitHoldPeriods($from);
         self::rebuildCreatorBalances($from);
+        self::recordListingModeration();
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -218,6 +219,33 @@ final class Migrator
         // The creator counter. add_option() is a no-op if it already exists,
         // which is what protects previously issued numbers on reactivation.
         add_option('mk_creator_seq', '0');
+    }
+
+    /**
+     * Record the client's choice of approval-based publishing explicitly.
+     *
+     * New creator listings already went to `pending`, but only because Dokan
+     * defaults dokan_selling[product_status] to 'pending' when it is unset. A
+     * decision the client made deliberately should not rest on another
+     * plugin's default, which a Dokan update could change without anyone
+     * noticing — listings would start going live unreviewed, silently.
+     *
+     * Set only when unset. The client has said they may move to instant
+     * publishing later; once someone changes it in Dokan's settings, this
+     * must never put it back.
+     */
+    private static function recordListingModeration(): void
+    {
+        $selling = get_option('dokan_selling', []);
+
+        if (!is_array($selling)) {
+            $selling = [];
+        }
+
+        if (!isset($selling['product_status'])) {
+            $selling['product_status'] = 'pending';
+            update_option('dokan_selling', $selling);
+        }
     }
 
     /**

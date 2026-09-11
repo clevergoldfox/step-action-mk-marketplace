@@ -52,6 +52,41 @@ final class PublishGate
         add_action('mk_creator_onboarding_completed', [self::class, 'releaseHeld'], 10, 1);
 
         add_action('dokan_dashboard_content_inside_before', [self::class, 'notice']);
+        add_action('admin_notices', [self::class, 'adminHeldNotice']);
+    }
+
+    /**
+     * Tell the administrator why their approval did not take.
+     *
+     * Under approval-based publishing the operator presses 公開 and the
+     * listing stays a draft. Without an explanation that is indistinguishable
+     * from the button being broken, and the natural response is to press it
+     * again, or to go looking for a setting to override.
+     */
+    public static function adminHeldNotice(): void
+    {
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+
+        if (!$screen || $screen->base !== 'post' || $screen->post_type !== 'product') {
+            return;
+        }
+
+        $postId = isset($_GET['post']) ? (int) $_GET['post'] : 0;
+
+        if ($postId <= 0 || get_post_meta($postId, self::META_HELD, true) !== 'yes') {
+            return;
+        }
+
+        $author = (int) get_post_field('post_author', $postId);
+        $user   = get_userdata($author);
+
+        printf(
+            '<div class="notice notice-warning"><p><strong>この商品はまだ公開できません。</strong><br>'
+            . '出品者（%s）の売上受取設定が完了していないため、公開すると購入者の代金を'
+            . '出品者へ送金できない状態になります。そのため下書きのまま保留しています。<br>'
+            . '出品者が設定を完了すると、この商品は自動的に公開されます。</p></div>',
+            esc_html($user ? $user->display_name : '#' . $author)
+        );
     }
 
     /** Pairs with the filter above; runs immediately after the row is written. */
@@ -87,8 +122,38 @@ final class PublishGate
             return $data;
         }
 
-        // The platform can publish anything, including on a creator's behalf.
-        if (current_user_can('manage_woocommerce')) {
+        /*
+         * No exemption for administrators.
+         *
+         * There used to be one — "the platform can publish anything, including
+         * on a creator's behalf" — and it was harmless while creators
+         * published their own listings. The client then chose approval-based
+         * publishing, which makes an administrator's click the ONLY way any
+         * listing goes live. The exemption stopped being an edge case and
+         * became the main path, silently switching the gate off.
+         *
+         * Proven rather than suspected: an administrator approving a pending
+         * listing from a creator with no completed Stripe account put it live,
+         * and a buyer could then have paid for an item whose seller cannot
+         * receive the money.
+         *
+         * Whether the creator can be paid is a fact about the AUTHOR, not about
+         * whoever pressed the button, so the check follows the author.
+         *
+         * Which means platform staff as AUTHOR is the exemption, not platform
+         * staff as clicker. A listing the operator created themselves is the
+         * platform's own: the platform is merchant of record and keeps that
+         * money, no transfer to a creator exists, and "can the creator be
+         * paid" has no meaning.
+         *
+         * That exemption cannot rely on dokan_is_user_seller() returning false
+         * for administrators, because it returns TRUE — Dokan treats every
+         * administrator as a seller. An earlier version of this comment
+         * claimed the opposite without checking, and the operator's own
+         * listings were then held for want of a Stripe account nobody would
+         * ever give them.
+         */
+        if (user_can($author, 'manage_woocommerce')) {
             return $data;
         }
 

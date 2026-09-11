@@ -29,6 +29,71 @@ final class Events
         add_action('mk_message_sent', [self::class, 'onMessage'], 10, 4);
         add_action('mk_report_opened', [self::class, 'onReport'], 10, 3);
         add_action('mk_transfer_sent', [self::class, 'onTransferSent'], 10, 3);
+        add_action('transition_post_status', [self::class, 'onListingStatus'], 10, 3);
+    }
+
+    /**
+     * The approval queue, from both sides.
+     *
+     * Operator: a listing has arrived and nobody can buy it until they act.
+     * Creator: it is live. Without the second, a creator's only way to find
+     * out is to keep reloading their product list, and one who lists something
+     * and hears nothing reasonably assumes it failed.
+     *
+     * A listing approved for a creator who cannot yet be paid does not go
+     * pending -> publish at all (PublishGate holds it as a draft), so no
+     * "published" message is sent for something that is not actually live.
+     */
+    public static function onListingStatus(string $new, string $old, \WP_Post $post): void
+    {
+        if ($post->post_type !== 'product' || $new === $old) {
+            return;
+        }
+
+        $author = (int) $post->post_author;
+
+        if (!function_exists('dokan_is_user_seller') || !dokan_is_user_seller($author)) {
+            return;
+        }
+
+        if ($new === 'pending') {
+            foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
+                Dispatcher::send(new Notification(
+                    type: 'listing.pending',
+                    userId: (int) $adminId,
+                    subject: '承認待ちの商品があります',
+                    body: sprintf(
+                        "新しい商品が出品され、承認を待っています。\n\n"
+                        . "商品名：%s\n出品者：%s\n\n"
+                        . "公開するまで、購入者はこの商品を購入できません。",
+                        $post->post_title,
+                        get_the_author_meta('display_name', $author)
+                    ),
+                    short: sprintf('承認待ち：%s', $post->post_title),
+                    url: admin_url('edit.php?post_type=product&post_status=pending'),
+                    context: ['product_id' => $post->ID],
+                ));
+            }
+
+            return;
+        }
+
+        if ($old === 'pending' && $new === 'publish') {
+            Dispatcher::send(new Notification(
+                type: 'listing.published',
+                userId: $author,
+                subject: '商品が公開されました',
+                body: sprintf(
+                    "出品された商品が承認され、公開されました。\n\n"
+                    . "商品名：%s\n\n"
+                    . "購入者が商品ページを閲覧・購入できるようになりました。",
+                    $post->post_title
+                ),
+                short: sprintf('「%s」が公開されました。', $post->post_title),
+                url: (string) get_permalink($post->ID),
+                context: ['product_id' => $post->ID],
+            ));
+        }
     }
 
     public static function onStatusChanged(int $orderId, string $from, string $to, WC_Order $order): void

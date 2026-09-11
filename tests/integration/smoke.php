@@ -1272,6 +1272,64 @@ if (is_wp_error($scUser)) {
     check('search fixtures removed', !get_userdata($scUser));
 }
 
+echo "\n=== listing approval ===\n";
+$sel = get_option('dokan_selling', []);
+check('approval-based publishing recorded', ($sel['product_status'] ?? '') === 'pending',
+    $sel['product_status'] ?? '(unset - resting on a Dokan default)');
+
+$apAdmin = (int) (get_users(['role' => 'administrator', 'number' => 1, 'fields' => 'ID'])[0] ?? 0);
+$apSeller = wp_insert_user(['user_login' => 'mk_smoke_ap_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($apSeller) || $apAdmin === 0) {
+    check('create approval fixtures', false, 'fixture setup failed');
+} else {
+    $was = get_current_user_id();
+
+    // Capture notifications without sending mail.
+    $sent = [];
+    $spy = function ($n) use (&$sent) { $sent[] = $n; };
+    add_action('mk_notification_sent', $spy);
+
+    // The scenario that was proven broken: an administrator approving a
+    // listing for a creator who cannot yet be paid.
+    $p1 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
+        'post_title' => 'smoke: awaiting approval', 'post_author' => $apSeller]);
+    check('operator told a listing is waiting',
+        (bool) array_filter($sent, fn($n) => $n->type === 'listing.pending'));
+
+    wp_set_current_user($apAdmin);
+    wp_update_post(['ID' => $p1, 'post_status' => 'publish']);
+    check('admin approval cannot publish for an unpayable creator',
+        get_post_status($p1) !== 'publish', get_post_status($p1));
+    check('held for automatic release', get_post_meta($p1, MK\Product\PublishGate::META_HELD, true) === 'yes');
+    check('creator NOT told it is live',
+        !array_filter($sent, fn($n) => $n->type === 'listing.published'));
+
+    // Once the creator can be paid, approval works normally.
+    update_user_meta($apSeller, MK\Stripe\AccountService::META_STATUS, MK\Stripe\AccountService::STATUS_COMPLETED);
+    $p2 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
+        'post_title' => 'smoke: approvable', 'post_author' => $apSeller]);
+    wp_update_post(['ID' => $p2, 'post_status' => 'publish']);
+    check('admin approval publishes for a payable creator', get_post_status($p2) === 'publish');
+    check('creator told it is live',
+        (bool) array_filter($sent, fn($n) => $n->type === 'listing.published'));
+
+    // An administrator's own products are not a seller's and are unaffected.
+    $p3 = wp_insert_post(['post_type' => 'product', 'post_status' => 'publish',
+        'post_title' => 'smoke: admin own', 'post_author' => $apAdmin]);
+    check("admin's own product publishes", get_post_status($p3) === 'publish');
+
+    check('pending count visible', MK\Product\Approval::pendingCount() >= 0);
+
+    remove_action('mk_notification_sent', $spy);
+    wp_set_current_user($was);
+    foreach ([$p1, $p2, $p3] as $pid) { wp_delete_post($pid, true); }
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($apSeller);
+    check('approval fixtures removed', !get_userdata($apSeller));
+}
+
 echo "\n=== timezone ===\n";
 check('Asia/Tokyo', wp_timezone_string() === 'Asia/Tokyo', wp_timezone_string());
 
