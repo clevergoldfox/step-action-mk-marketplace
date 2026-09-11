@@ -1378,6 +1378,21 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
     check('approval fixtures removed', !get_userdata($apSeller));
 }
 
+echo "\n=== listing form ===\n";
+ob_start();
+dokan_get_template_part('products/product-brand', '', ['product_brands' => []]);
+$brandHtml = (string) ob_get_clean();
+check('brand field not rendered', !str_contains($brandHtml, 'product_brand'), trim(substr($brandHtml, 0, 60)));
+
+// The filter must hide only what it names; a neighbouring part still renders.
+ob_start();
+dokan_get_template_part('products/downloadable', '', ['post_id' => 0, 'class' => '']);
+check('other form parts still render', trim((string) ob_get_clean()) !== '');
+
+$sel = get_option('dokan_selling', []);
+check('single listing form (quick-add popup off)', ($sel['disable_product_popup'] ?? '') === 'on',
+    $sel['disable_product_popup'] ?? '(unset)');
+
 echo "\n=== LINE rich-menu links ===\n";
 $lnBuyer  = wp_insert_user(['user_login' => 'mk_smoke_lnb_' . wp_rand(1000,9999),
     'user_pass' => wp_generate_password(24), 'role' => 'customer']);

@@ -128,6 +128,7 @@ add_action('plugins_loaded', static function (): void {
     Product\Statuses::register();
     Product\PublishGate::register();
     Product\Approval::register();
+    Product\ListingForm::register();
     Schedule\Jobs::register();
     Line\Links::register();
 

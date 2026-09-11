@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 7;
+    public const SCHEMA_VERSION = 8;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -186,6 +186,7 @@ final class Migrator
         self::splitHoldPeriods($from);
         self::rebuildCreatorBalances($from);
         self::recordListingModeration();
+        self::useFullListingForm();
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -244,6 +245,32 @@ final class Migrator
 
         if (!isset($selling['product_status'])) {
             $selling['product_status'] = 'pending';
+            update_option('dokan_selling', $selling);
+        }
+    }
+
+    /**
+     * One listing form, not two.
+     *
+     * Dokan offers a second, cut-down "quick add" form in a popup, reached
+     * from 新しい商品を追加 on the product list; the tab bar's 出品 goes to the
+     * full page. Two forms meant every change the client asked for -- button
+     * sizes, the image controls, the 受取設定 callout -- had a second place to
+     * go wrong, and a modal form is the cramped one on a phone.
+     *
+     * Set only when unset, like product_status: turning the popup back on in
+     * Dokan's settings must stick.
+     */
+    private static function useFullListingForm(): void
+    {
+        $selling = get_option('dokan_selling', []);
+
+        if (!is_array($selling)) {
+            $selling = [];
+        }
+
+        if (!isset($selling['disable_product_popup'])) {
+            $selling['disable_product_popup'] = 'on';
             update_option('dokan_selling', $selling);
         }
     }
