@@ -21,12 +21,88 @@ namespace MK\I18n;
  */
 final class DokanTranslations
 {
+    /**
+     * Dokan's dashboard header is a React bundle, not a PHP template, so the
+     * .mo above never reaches it: its strings go through wp.i18n in the
+     * browser. That is why the header still said "Visit Store" after the rest
+     * of the dashboard was Japanese.
+     */
+    private const SCRIPT_HANDLE = 'dokan-vendor-dashboard';
+
+    private static bool $scriptDone = false;
+
     public static function register(): void
     {
         // init, not plugins_loaded: WordPress 6.7 emits a notice for text
         // domains loaded before init, and Dokan builds its dashboard strings
         // at render time, well after this runs.
         add_action('init', [self::class, 'load'], 1);
+
+        // Just before scripts print, in the head and again in the footer:
+        // Dokan registers the bundle from a shortcode, so whether it exists
+        // yet by wp_enqueue_scripts depends on the page.
+        add_action('wp_print_scripts', [self::class, 'scriptStrings'], 1);
+        add_action('wp_print_footer_scripts', [self::class, 'scriptStrings'], 1);
+    }
+
+    /**
+     * Every string the header bundle passes to __(), extracted from Dokan's
+     * build. Anything missing here falls back to English, as with the .mo.
+     *
+     * @return array<string,string>
+     */
+    public static function scriptMessages(): array
+    {
+        return [
+            '%1$s at %2$s'                               => '%1$s %2$s',
+            '(%1$s)'                                     => '（%1$s）',
+            'Add Filter'                                 => '絞り込みを追加',
+            'Are you sure? This action cannot be undone.' => '本当によろしいですか？この操作は元に戻せません。',
+            'Commissions'                                => '手数料',
+            'Dokan'                                      => get_bloginfo('name'),
+            'Net Sales'                                  => '純売上',
+            'No data found'                              => 'データがありません',
+            'Remove filter'                              => '絞り込みを解除',
+            'Select or Upload Media'                     => '画像を選択またはアップロード',
+            'Store Image'                                => 'ショップ画像',
+            'Total Sales'                                => '売上合計',
+            'Use this media'                             => 'この画像を使う',
+            'User Profile Image'                         => 'プロフィール画像',
+            'Vendor Dashboard'                           => '出品者ダッシュボード',
+            'Vendor Dashboard Logo'                      => '出品者ダッシュボードのロゴ',
+            'Visit Store'                                => 'ショップを見る',
+            'Your Store'                                 => 'あなたのショップ',
+        ];
+    }
+
+    public static function scriptStrings(): void
+    {
+        if (self::$scriptDone || !str_starts_with(determine_locale(), 'ja')) {
+            return;
+        }
+
+        if (!wp_script_is(self::SCRIPT_HANDLE, 'registered')) {
+            return;
+        }
+
+        self::$scriptDone = true;
+
+        $data = ['' => ['domain' => 'dokan-lite', 'lang' => 'ja']];
+
+        foreach (self::scriptMessages() as $english => $japanese) {
+            $data[$english] = [$japanese];
+        }
+
+        // 'before' runs after the bundle's dependencies (wp-i18n among them)
+        // and before the bundle itself renders anything.
+        wp_add_inline_script(
+            self::SCRIPT_HANDLE,
+            sprintf(
+                'wp.i18n.setLocaleData(%s, "dokan-lite");',
+                wp_json_encode($data, JSON_UNESCAPED_UNICODE)
+            ),
+            'before'
+        );
     }
 
     public static function load(): void
