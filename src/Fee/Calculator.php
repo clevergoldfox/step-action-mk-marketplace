@@ -10,8 +10,11 @@ use MK\Support\Money;
  *
  * Two rates apply, and they are different:
  *
- *   product portion  ->  16.0%   (mk_fee_rate)
+ *   product portion  ->  14.0%   (mk_fee_rate)
  *   option portion   ->  40.0%   (mk_option_fee_rate)
+ *
+ * Both are settings, changeable at WooCommerce -> 手数料設定 (Fee\Admin).
+ * The figures above are today's values, not constants.
  *
  * Because the rates differ, the order MUST carry the product and option
  * amounts separately. A single `total` cannot be decomposed afterwards, and
@@ -38,8 +41,8 @@ final class Calculator
     public static function fromSettings(): self
     {
         return new self(
-            (float) get_option('mk_fee_rate', 0.16),
-            (float) get_option('mk_option_fee_rate', 0.40),
+            Settings::productRate(),
+            Settings::optionRate(),
         );
     }
 

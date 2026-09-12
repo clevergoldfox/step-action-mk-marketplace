@@ -67,7 +67,7 @@ final class Money
      * The rate is converted to integer basis points before multiplying, so the
      * arithmetic is exact. Doing this in floating point silently loses a yen
      * on some inputs -- floor(12000 * 0.036) is 431, not 432, because the
-     * product is 431.99999999999994 in IEEE754. Our own 16% and 40% happen to
+     * product is 431.99999999999994 in IEEE754. Our own rates happen to
      * be safe, but the rate is admin-editable, so "happens to be safe" is not
      * a property worth depending on in code that moves money.
      *

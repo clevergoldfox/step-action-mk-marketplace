@@ -198,7 +198,7 @@ final class Migrator
     private static function seedOptions(): void
     {
         $defaults = [
-            'mk_fee_rate'              => 0.16,
+            'mk_fee_rate'              => 0.14,
             'mk_option_fee_rate'       => 0.40,
             'mk_auto_complete_days'    => 7,
             // Three tiers, agreed with the client. A new creator waits longer

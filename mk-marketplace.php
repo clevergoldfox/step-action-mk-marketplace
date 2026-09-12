@@ -120,6 +120,7 @@ add_action('plugins_loaded', static function (): void {
     Checkout\Controller::register();
     Notify\Events::register();
     Option\Admin::register();
+    Fee\Admin::register();
     Option\ProductPanel::register();
     Follow\Frontend::register();
     Message\Frontend::register();

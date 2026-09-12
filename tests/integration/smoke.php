@@ -345,8 +345,13 @@ check('endpoint is https', str_starts_with($hook, 'https://'), $hook);
 echo "\n=== fee calculation (live settings) ===\n";
 $b = MK\Fee\Calculator::fromSettings()->calculate(10000, 2000);
 check('total 12000', $b->total === 12000, (string) $b->total);
-check('platform fee 2400', $b->platformFee === 2400, (string) $b->platformFee);
-check('creator 9600', $b->creatorAmount === 9600, (string) $b->creatorAmount);
+// Derived from the live rates, not written in: the rates are a setting the
+// operator can change (WooCommerce -> 手数料設定), so a hard-coded figure here
+// fails the day they use it and tells them nothing about what broke.
+$feeNow = MK\Support\Money::applyRate(10000, MK\Fee\Settings::productRate())
+        + MK\Support\Money::applyRate(2000, MK\Fee\Settings::optionRate());
+check('platform fee matches the live rates', $b->platformFee === $feeNow, (string) $b->platformFee);
+check('creator gets the rest', $b->creatorAmount === 12000 - $feeNow, (string) $b->creatorAmount);
 check('halves sum to total', $b->platformFee + $b->creatorAmount === $b->total);
 
 echo "\n=== creator numbering (real DB, atomic) ===\n";
@@ -913,6 +918,53 @@ if (is_wp_error($fwCreator) || is_wp_error($fwFan1) || is_wp_error($fwFan2)) {
     check('follow fixtures removed', !get_userdata($fwCreator));
 }
 
+echo "\n=== 手数料率（納品後に変更できること） ===\n";
+check('商品本体 14%', abs(MK\Fee\Settings::productRate() - 0.14) < 0.0001,
+    (string) MK\Fee\Settings::productRate());
+check('オプション 40%', abs(MK\Fee\Settings::optionRate() - 0.40) < 0.0001,
+    (string) MK\Fee\Settings::optionRate());
+
+check('typed as a percentage', abs(MK\Fee\Settings::fromPercent('14.5') - 0.145) < 1e-9);
+check('full-width digits accepted', abs(MK\Fee\Settings::fromPercent('１４') - 0.14) < 1e-9);
+
+$rejected = static function (callable $fn): bool {
+    try { $fn(); return false; } catch (Throwable) { return true; }
+};
+check('non-numeric rejected', $rejected(fn() => MK\Fee\Settings::fromPercent('あ')));
+check('absurd rate rejected', $rejected(fn() => MK\Fee\Settings::update(0.95, 0.40, 0)));
+
+$feeP = MK\Fee\Settings::productRate();
+$feeO = MK\Fee\Settings::optionRate();
+$histWas = count(MK\Fee\Settings::history(100));
+
+// An order placed now, then the operator changes the rates.
+$atPurchase = MK\Fee\Calculator::fromSettings()->calculate(10000, 1000);
+MK\Fee\Settings::update(0.20, 0.30, 0);
+
+check('new rate applies to the next order',
+    MK\Fee\Calculator::fromSettings()->calculate(10000, 0)->platformFee === 2000,
+    (string) MK\Fee\Calculator::fromSettings()->calculate(10000, 0)->platformFee);
+
+// The promise to the creator: an order already placed is untouched.
+$rebuilt = MK\Fee\Calculator::fromSnapshot($atPurchase->productRate, $atPurchase->optionRate)
+    ->calculate(10000, 1000);
+check('past order keeps the rates it was bought at',
+    $rebuilt->platformFee === $atPurchase->platformFee
+        && $rebuilt->creatorAmount === $atPurchase->creatorAmount,
+    "then={$atPurchase->creatorAmount} now={$rebuilt->creatorAmount}");
+
+check('change written to the history', count(MK\Fee\Settings::history(100)) === $histWas + 1);
+$entry = MK\Fee\Settings::history(1)[0];
+check('history records old -> new',
+    abs((float) $entry->old_product_rate - $feeP) < 0.0001
+        && abs((float) $entry->new_product_rate - 0.20) < 0.0001);
+
+MK\Fee\Settings::update($feeP, $feeO, 0);
+check('rates restored', abs(MK\Fee\Settings::productRate() - $feeP) < 0.0001);
+
+$wpdb->query("DELETE FROM {$wpdb->prefix}mk_fee_rate_history ORDER BY id DESC LIMIT 2");
+check('fee-history fixtures removed', count(MK\Fee\Settings::history(100)) === $histWas);
+
 echo "\n=== オプション価格設定 ===\n";
 $opSvc = new MK\Option\Service();
 global $wpdb;
@@ -959,8 +1011,10 @@ check('unknown group ignored', $bogus === 0, $bogus . ' row(s)');
 
 // Options are charged at their own, higher rate.
 $b = MK\Fee\Calculator::fromSettings()->calculate(3000, 900);
+$expectedFee = MK\Support\Money::applyRate(3000, MK\Fee\Settings::productRate())
+             + MK\Support\Money::applyRate(900, MK\Fee\Settings::optionRate());
 check('option fee rate differs from product',
-    $b->total === 3900 && $b->platformFee === 480 + 360,
+    $b->total === 3900 && $b->platformFee === $expectedFee && $b->optionFee === 360,
     "total={$b->total} fee={$b->platformFee} creator={$b->creatorAmount}");
 check('halves still sum exactly', $b->platformFee + $b->creatorAmount === $b->total);
 

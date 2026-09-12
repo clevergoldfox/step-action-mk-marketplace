@@ -10,7 +10,7 @@ use MK\Fee\Calculator;
  *
  * Shows what they actually take home rather than only what the buyer pays.
  * Options carry a much higher commission than the item itself — 40% against
- * 16% — and a creator who prices gift wrapping at ¥500 expecting ¥500 will be
+ * 14% today — and a creator who prices gift wrapping at ¥500 expecting ¥500 will be
  * unpleasantly surprised by ¥300. Telling them at the moment they type the
  * number is the only honest place to do it.
  */

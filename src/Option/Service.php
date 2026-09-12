@@ -23,7 +23,7 @@ use RuntimeException;
  * "ギフト包装" against "プレゼント用" and unable to filter on any of them.
  *
  * Options carry their own commission rate (mk_option_fee_rate, 40%), well
- * above the 16% on the item itself. Nothing here needs to know that -- the
+ * above the rate on the item itself. Nothing here needs to know that -- the
  * amount is passed to Fee\Calculator, which applies both rates and snapshots
  * them onto the order at purchase -- but it is why an option's price is worth
  * getting right rather than treating as a rounding error.
