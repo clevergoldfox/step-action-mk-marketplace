@@ -1512,6 +1512,9 @@ if (is_wp_error($lnBuyer) || is_wp_error($lnSeller)) {
 
     // A stale cookie from someone else's tap must not hijack an ordinary login.
     $_COOKIE['mk_line_after_login'] = 'https://evil.example/';
+    check('menu alias resolves the same', str_contains(MK\Line\Links::menuUrl('sell'), '/go/sell/'),
+        MK\Line\Links::menuUrl('sell'));
+
     check('tampered return cookie ignored', MK\Line\Links::afterLogin('/x') === '/x');
     $_COOKIE['mk_line_after_login'] = 'sell';
     check('return cookie goes back through /line/',

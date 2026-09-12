@@ -54,8 +54,6 @@ msgstr "処理中"
 msgid "On Hold"
 msgstr "保留中"
 
-msgid "Store"
-msgstr "ショップ"
 
 msgid "Payment"
 msgstr "支払い"
@@ -870,8 +868,6 @@ msgstr "期間を設定"
 msgid "Product price can't be less than the vendor fee!"
 msgstr "価格が手数料を下回っています"
 
-msgid "YYYY-MM-DD"
-msgstr "YYYY-MM-DD"
 
 msgid "Upload a product cover image"
 msgstr "メイン画像をアップロード"
@@ -1323,3 +1319,130 @@ msgstr "このショップの他の商品"
 
 msgid "Vendor Info"
 msgstr "出品者情報"
+
+# --- store page and store list (client review, 2026-09-12) ---
+
+msgid "No ratings found yet!"
+msgstr "まだ評価がありません"
+
+msgid "Enter product name"
+msgstr "商品名で探す"
+
+msgid "Search Vendors"
+msgstr "ショップを探す"
+
+msgid "Sort by"
+msgstr "並び替え"
+
+msgid "Most Recent"
+msgstr "新着順"
+
+msgid "Most Popular"
+msgstr "人気順"
+
+msgid "Random"
+msgstr "ランダム"
+
+msgid "Store"
+msgstr "ショップ"
+
+msgid "Become a Vendor"
+msgstr "出品者になる"
+
+msgid "Vendors can sell products and manage a store with a vendor dashboard."
+msgstr "出品者になると、商品を出品し、専用の管理画面でショップを運営できます。"
+
+msgid "Total store showing: %s"
+msgid_plural "Total stores showing: %s"
+msgstr[0] "表示中のショップ：%s件"
+
+# --- dashboard leftovers found by scanning the rendered pages (2026-09-12) ---
+
+msgid "All dates"
+msgstr "すべての期間"
+
+msgid "YYYY-MM-DD"
+msgstr "年-月-日（例 2026-10-01）"
+
+msgid "- Select a location -"
+msgstr "- 地域を選択 -"
+
+msgid "Monday"
+msgstr "月曜日"
+
+msgid "Tuesday"
+msgstr "火曜日"
+
+msgid "Wednesday"
+msgstr "水曜日"
+
+msgid "Thursday"
+msgstr "木曜日"
+
+msgid "Friday"
+msgstr "金曜日"
+
+msgid "Saturday"
+msgstr "土曜日"
+
+msgid "Sunday"
+msgstr "日曜日"
+
+msgid "Monday Schedule"
+msgstr "月曜日の営業時間"
+
+msgid "Tuesday Schedule"
+msgstr "火曜日の営業時間"
+
+msgid "Wednesday Schedule"
+msgstr "水曜日の営業時間"
+
+msgid "Thursday Schedule"
+msgstr "木曜日の営業時間"
+
+msgid "Friday Schedule"
+msgstr "金曜日の営業時間"
+
+msgid "Saturday Schedule"
+msgstr "土曜日の営業時間"
+
+msgid "Sunday Schedule"
+msgstr "日曜日の営業時間"
+
+# --- admin menu and admin bar (client asked for Japanese everywhere) ---
+
+msgid "Vendors"
+msgstr "出品者"
+
+msgid "Reverse Withdrawal"
+msgstr "出金の差し戻し"
+
+msgid "Modules"
+msgstr "機能モジュール"
+
+msgid "Pro Features"
+msgstr "Pro版の機能"
+
+msgid "Chat with us"
+msgstr "チャットで問い合わせ"
+
+msgid "Visit Shop"
+msgstr "ショップを見る"
+
+msgid "Visit Stores"
+msgstr "ショップ一覧を見る"
+
+msgid "Visit Vendor Dashboard"
+msgstr "出品者ダッシュボードを見る"
+
+msgid "Dokan"
+msgstr "マーケットプレイス"
+
+msgid "Tools"
+msgstr "ツール"
+
+msgid "Help"
+msgstr "ヘルプ"
+
+msgid "Extensions"
+msgstr "拡張機能"

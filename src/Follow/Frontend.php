@@ -87,7 +87,7 @@ final class Frontend
 
         if ($userId === 0) {
             printf(
-                '<a href="%s" class="dokan-btn dokan-btn-sm">ログインしてフォロー</a>',
+                '<a href="%s" class="dokan-btn dokan-btn-sm dokan-btn-theme">ログインしてフォロー</a>',
                 esc_url(wp_login_url(dokan_get_store_url($creatorId)))
             );
             echo '</div>';

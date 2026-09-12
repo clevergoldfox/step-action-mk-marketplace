@@ -28,6 +28,15 @@ final class Links
 {
     public const PREFIX = 'line';
 
+    /**
+     * Alternative prefix for the same destinations.
+     *
+     * The site's own menu needs the same "send this person to the right
+     * place" behaviour, and /line/sell/ in the address bar of someone who
+     * never came from LINE reads as a mistake. Same resolver, two doors.
+     */
+    public const ALT_PREFIX = 'go';
+
     /** Where to send someone after they log in. Holds a slug, never a URL. */
     private const COOKIE = 'mk_line_after_login';
 
@@ -61,9 +70,15 @@ final class Links
         ];
     }
 
-    public static function url(string $slug): string
+    public static function url(string $slug, string $prefix = self::PREFIX): string
     {
-        return home_url('/' . self::PREFIX . '/' . $slug . '/');
+        return home_url('/' . $prefix . '/' . $slug . '/');
+    }
+
+    /** The menu-facing address for a slug: /go/{slug}/. */
+    public static function menuUrl(string $slug): string
+    {
+        return self::url($slug, self::ALT_PREFIX);
     }
 
     /**
@@ -110,7 +125,9 @@ final class Links
     {
         $path = trim((string) $wp->request, '/');
 
-        if (!preg_match('#^' . self::PREFIX . '/([a-z]+)$#', $path, $m)) {
+        $pattern = '#^(' . self::PREFIX . '|' . self::ALT_PREFIX . ')/([a-z]+)$#';
+
+        if (!preg_match($pattern, $path, $m)) {
             return;
         }
 
@@ -118,7 +135,7 @@ final class Links
             return;
         }
 
-        $slug   = $m[1];
+        $slug   = $m[2];
         $userId = get_current_user_id();
         $target = self::resolve($slug, $userId);
 

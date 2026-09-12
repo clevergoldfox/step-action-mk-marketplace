@@ -43,6 +43,9 @@ final class DokanTranslations
         // yet by wp_enqueue_scripts depends on the page.
         add_action('wp_print_scripts', [self::class, 'scriptStrings'], 1);
         add_action('wp_print_footer_scripts', [self::class, 'scriptStrings'], 1);
+
+        // After Dokan's own filter (priority 10), which builds this crumb.
+        add_filter('woocommerce_get_breadcrumb', [self::class, 'storeBreadcrumb'], 20, 1);
     }
 
     /**
@@ -103,6 +106,43 @@ final class DokanTranslations
             ),
             'before'
         );
+    }
+
+    /**
+     * The store page's breadcrumb, in Japanese and by shop name.
+     *
+     * Dokan builds it as ucwords() of the store URL base -- literally
+     * "Store", untranslatable -- followed by the seller's LOGIN SLUG. So a
+     * creator's page read "Store / mk_test_creator" instead of naming their
+     * shop. Rewritten here rather than by changing Dokan.
+     *
+     * @param array<int, array{0:string,1:string}> $crumbs
+     * @return array<int, array{0:string,1:string}>
+     */
+    public static function storeBreadcrumb(array $crumbs): array
+    {
+        if (!function_exists('dokan_is_store_page') || !dokan_is_store_page()) {
+            return $crumbs;
+        }
+
+        $listing = (int) (get_option('dokan_pages', [])['store_listing'] ?? 0);
+
+        if (isset($crumbs[1]) && $listing > 0) {
+            $crumbs[1] = [get_the_title($listing), (string) get_permalink($listing)];
+        }
+
+        if (isset($crumbs[2][0])) {
+            $user = get_user_by('slug', (string) $crumbs[2][0]);
+
+            if ($user) {
+                $info = function_exists('dokan_get_store_info') ? dokan_get_store_info($user->ID) : [];
+                $name = trim((string) ($info['store_name'] ?? ''));
+
+                $crumbs[2][0] = $name !== '' ? $name : $user->display_name;
+            }
+        }
+
+        return $crumbs;
     }
 
     public static function load(): void
