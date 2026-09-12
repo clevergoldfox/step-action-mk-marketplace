@@ -1448,6 +1448,28 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
 
     check('pending count visible', MK\Product\Approval::pendingCount() >= 0);
 
+    // The operator edited three 審査待ち listings and reported the site had
+    // not changed. It had not: nothing about a pending listing is public.
+    // The edit screen now says so.
+    $_GET['post'] = $p4;
+    set_current_screen('post');
+    $screen = get_current_screen();
+    $screen->post_type = 'product';
+
+    ob_start(); MK\Product\Approval::editScreenNotice(); $notice = (string) ob_get_clean();
+    check('edit screen warns that a pending listing is not public',
+        str_contains($notice, '公開されていません'), trim(wp_strip_all_tags($notice)));
+
+    wp_update_post(['ID' => $p4, 'post_status' => 'publish']);
+    ob_start(); MK\Product\Approval::editScreenNotice(); $afterPublish = (string) ob_get_clean();
+    check('no warning once it is published', $afterPublish === '');
+
+    // set_current_screen() makes is_admin() true for the rest of the run --
+    // it consults $current_screen before the WP_ADMIN constant -- which
+    // silently disabled the category-archive guard further down.
+    unset($_GET['post'], $GLOBALS['current_screen']);
+    check('admin screen state cleaned up', !is_admin());
+
     remove_action('mk_notification_sent', $spy);
     wp_set_current_user($was);
     foreach ([$p1, $p2, $p3, $p4] as $pid) { wp_delete_post($pid, true); }

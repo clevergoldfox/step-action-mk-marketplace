@@ -21,6 +21,40 @@ final class Approval
     public static function register(): void
     {
         add_action('admin_notices', [self::class, 'pendingNotice']);
+        add_action('admin_notices', [self::class, 'editScreenNotice']);
+    }
+
+    /**
+     * On the product itself: this one is still waiting.
+     *
+     * The operator edited three listings, saved them, and reported that the
+     * site did not change. It had not: all three were still 審査待ち, so
+     * nothing about them was public yet -- and the edit screen says so
+     * nowhere, since WordPress calls the state 「レビュー待ち」 in a dropdown
+     * most people never look at.
+     */
+    public static function editScreenNotice(): void
+    {
+        if (!current_user_can('manage_woocommerce')) {
+            return;
+        }
+
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+
+        if (!$screen || $screen->base !== 'post' || $screen->post_type !== 'product') {
+            return;
+        }
+
+        $postId = isset($_GET['post']) ? (int) $_GET['post'] : 0;
+
+        if ($postId <= 0 || get_post_status($postId) !== 'pending') {
+            return;
+        }
+
+        echo '<div class="notice notice-warning"><p>'
+            . '<strong>この商品はまだ公開されていません（審査待ち）。</strong><br>'
+            . '編集した内容は保存されますが、公開するまで購入者には表示されません。'
+            . '公開するには、右上の「公開」ボタンを押してください。</p></div>';
     }
 
     public static function pendingCount(): int
