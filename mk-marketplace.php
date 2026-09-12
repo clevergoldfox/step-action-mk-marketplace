@@ -109,6 +109,7 @@ add_action('plugins_loaded', static function (): void {
         Install\Migrator::run();
     }
 
+    Compat\DokanPageIds::register();
     I18n\DokanTranslations::register();
     Order\Statuses::register();
     Order\Transitions::register();

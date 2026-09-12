@@ -1481,6 +1481,59 @@ $editUrl = dokan_edit_product_url(494);
 check('edit link goes to that form', is_string($editUrl) && str_contains($editUrl, 'action=edit'),
     (string) $editUrl);
 
+echo "\n=== category archives are not the seller dashboard ===\n";
+
+// A term id and a page id are unrelated numbers from different tables, and
+// Dokan compares them without checking which was queried. Four category
+// pages rendered the dashboard shell -- blank, to a logged-out shopper.
+$dashPage = (int) (get_option('dokan_pages')['dashboard'] ?? 0);
+$collision = get_terms([
+    'taxonomy'   => 'product_cat',
+    'hide_empty' => false,
+    'include'    => [$dashPage],
+]);
+
+check('the id collision this guards against still exists',
+    !is_wp_error($collision) && count($collision) === 1,
+    'term #' . $dashPage . ' ' . (is_wp_error($collision) || !$collision ? '(none)' : $collision[0]->name));
+
+if (!is_wp_error($collision) && $collision) {
+    $term = $collision[0];
+
+    global $wp_query;
+    $realQuery = $wp_query;
+
+    $fake = new WP_Query();
+    $fake->queried_object    = $term;
+    $fake->queried_object_id = $term->term_id;
+    $wp_query = $fake;
+
+    $treatedAsDashboard = dokan_is_seller_dashboard();
+
+    $wp_query = $realQuery;
+
+    check('a category archive is not treated as the dashboard', !$treatedAsDashboard,
+        $treatedAsDashboard ? 'term ' . $term->term_id . ' hijacked by the dashboard' : '');
+}
+
+// The dashboard page itself must still be recognised.
+global $wp_query;
+$realQuery = $wp_query;
+$page      = get_post($dashPage);
+
+if ($page instanceof WP_Post) {
+    $fake = new WP_Query();
+    $fake->queried_object    = $page;
+    $fake->queried_object_id = $page->ID;
+    $wp_query = $fake;
+
+    $isDashboard = dokan_is_seller_dashboard();
+
+    $wp_query = $realQuery;
+
+    check('the dashboard page is still the dashboard', $isDashboard);
+}
+
 echo "\n=== 新規登録ページ ===\n";
 $regPage = (int) get_option(MK\Account\Registration::PAGE_OPTION);
 check('sign-up page exists', $regPage > 0 && get_post_status($regPage) === 'publish',
