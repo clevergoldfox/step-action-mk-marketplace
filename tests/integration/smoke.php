@@ -1481,6 +1481,51 @@ $editUrl = dokan_edit_product_url(494);
 check('edit link goes to that form', is_string($editUrl) && str_contains($editUrl, 'action=edit'),
     (string) $editUrl);
 
+echo "\n=== 新規登録ページ ===\n";
+$regPage = (int) get_option(MK\Account\Registration::PAGE_OPTION);
+check('sign-up page exists', $regPage > 0 && get_post_status($regPage) === 'publish',
+    $regPage > 0 ? get_post_status($regPage) : '(no page)');
+check('sign-up page carries the shortcode',
+    str_contains((string) get_post_field('post_content', $regPage), '[mk_register]'));
+
+// The page is recreated if it is ever trashed, like the checkout page.
+wp_update_post(['ID' => $regPage, 'post_status' => 'draft']);
+MK\Account\Registration::ensurePage();
+$healed = (int) get_option(MK\Account\Registration::PAGE_OPTION);
+check('a trashed sign-up page comes back', $healed > 0 && get_post_status($healed) === 'publish');
+
+if ($healed !== $regPage) {
+    wp_delete_post($healed, true);
+    update_option(MK\Account\Registration::PAGE_OPTION, $regPage);
+}
+
+wp_update_post(['ID' => $regPage, 'post_status' => 'publish']);
+
+// Logged out, the form must carry everything WooCommerce's own handler
+// needs, or the page would look right and register nobody.
+$was = get_current_user_id();
+wp_set_current_user(0);
+$form = MK\Account\Registration::render();
+wp_set_current_user($was);
+
+check('form posts what WooCommerce expects',
+    str_contains($form, 'name="email"')
+        && str_contains($form, 'name="register"')
+        && str_contains($form, 'woocommerce-register-nonce'));
+check('password is chosen at sign-up, not emailed',
+    get_option('woocommerce_registration_generate_password') === 'no',
+    (string) get_option('woocommerce_registration_generate_password'));
+check('sign-up links to login', str_contains($form, (string) wc_get_page_permalink('myaccount')));
+
+// Logged in, it must not offer a second account.
+wp_set_current_user(1);
+$already = MK\Account\Registration::render();
+wp_set_current_user($was);
+check('already logged in: no second form', !str_contains($already, 'name="register"'));
+
+check('login page links to sign-up',
+    str_contains((string) file_get_contents(get_stylesheet_directory() . '/woocommerce/myaccount/form-login.php'), 'mk-auth__switch'));
+
 echo "\n=== LINE rich-menu links ===\n";
 $lnBuyer  = wp_insert_user(['user_login' => 'mk_smoke_lnb_' . wp_rand(1000,9999),
     'user_pass' => wp_generate_password(24), 'role' => 'customer']);
