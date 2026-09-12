@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 9;
+    public const SCHEMA_VERSION = 10;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -188,6 +188,7 @@ final class Migrator
         self::recordListingModeration();
         self::useFullListingForm();
         self::useLegacyProductEditor();
+        self::nameExistingShops();
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -310,6 +311,23 @@ final class Migrator
 
         update_option('dokan_appearance', $appearance);
         update_option('mk_product_editor_pinned', 'yes');
+    }
+
+    /**
+     * Give every existing creator a shop name.
+     *
+     * Dokan reads the name with no fallback, so creators who registered
+     * without filling that field showed as a nameless card on the shop list.
+     * New accounts are handled as they are created; this catches the ones
+     * that already existed.
+     */
+    private static function nameExistingShops(): void
+    {
+        $filled = \MK\Creator\ShopName::backfill();
+
+        if ($filled > 0) {
+            error_log(sprintf('[mk-marketplace] named %d shop(s) that had no store name', $filled));
+        }
     }
 
     /**
