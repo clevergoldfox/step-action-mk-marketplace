@@ -16,15 +16,30 @@ use MK\Fee\Calculator;
  */
 final class ProductPanel
 {
+    /** Both hooks below fire on the edit screen; the panel is drawn once. */
+    private static bool $rendered = false;
+
     public static function register(): void
     {
         add_action('dokan_product_edit_after_options', [self::class, 'render'], 10, 2);
+
+        // Also on the creation form. Without this a creator had to save the
+        // listing, find it again and open it for editing before they could
+        // price an option -- so in practice options went unset.
+        add_action('dokan_new_product_form', [self::class, 'render'], 10, 2);
+
         add_action('dokan_product_updated', [self::class, 'save'], 10, 1);
         add_action('dokan_new_product_added', [self::class, 'save'], 10, 1);
     }
 
     public static function render($post = null, $postId = null): void
     {
+        if (self::$rendered) {
+            return;
+        }
+
+        self::$rendered = true;
+
         $productId = (int) ($postId ?: (is_object($post) ? ($post->ID ?? 0) : 0));
 
         $service = new Service();
@@ -42,6 +57,8 @@ final class ProductPanel
         echo '<div class="dokan-section-heading"><h2>オプション設定</h2>';
         printf(
             '<p class="dokan-section-desc">この商品で提供するオプションと価格を設定します。'
+            . '<strong>「表示する」のチェックを外したオプションは、この商品の購入画面に表示されません。</strong>'
+            . '商品ごとに選べます。<br>'
             . 'オプション売上には %s%% の運営手数料がかかります'
             . '（受取額はご入力額の約 %d%% です）。</p>',
             esc_html((string) round($optRate * 100, 1)),
@@ -49,10 +66,11 @@ final class ProductPanel
         );
         echo '</div><div class="dokan-section-content">';
 
-        echo '<table class="dokan-table" style="width:100%">';
-        echo '<thead><tr><th style="width:80px">提供する</th><th>オプション</th>'
-            . '<th style="width:180px">価格（円・税込）</th>'
-            . '<th style="width:140px">受取額の目安</th></tr></thead><tbody>';
+        // Deliberately not a <table>. Dokan's table styling is built for a
+        // desktop dashboard, and forcing it into a phone layout meant
+        // overriding column widths and header cells until rows overflowed the
+        // screen. Our own markup is a list that stacks by itself.
+        echo '<ul class="mk-option-rows">';
 
         foreach ($groups as $group) {
             $gid     = (int) $group->id;
@@ -64,30 +82,35 @@ final class ProductPanel
                 ? Calculator::fromSettings()->calculate(0, $price)->creatorAmount
                 : 0;
 
-            echo '<tr>';
+            echo '<li class="mk-option-row">';
+
             printf(
-                '<td style="text-align:center"><input type="checkbox" name="mk_option[%d][offered]" '
-                . 'value="1"%s></td>',
+                '<label class="mk-option-row__show"><input type="checkbox" name="mk_option[%d][offered]" value="1"%s>'
+                . '<span>表示する</span></label>',
                 $gid,
                 $offered ? ' checked' : ''
             );
-            printf('<td>%s</td>', esc_html((string) $group->name));
+
+            printf('<p class="mk-option-row__name">%s</p>', esc_html((string) $group->name));
+
             printf(
-                '<td><input type="number" name="mk_option[%d][price]" value="%d" min="0" step="1" '
-                . 'class="dokan-form-control" style="width:150px"></td>',
+                '<p class="mk-option-row__price"><label for="mk-option-price-%1$d">価格（円・税込）</label>'
+                . '<input type="number" id="mk-option-price-%1$d" name="mk_option[%1$d][price]" value="%2$d" '
+                . 'min="0" step="1" inputmode="numeric" class="dokan-form-control"></p>',
                 $gid,
                 $price
             );
+
             printf(
-                '<td class="mk-option-net">%s</td>',
+                '<p class="mk-option-row__net">受取額の目安：%s</p>',
                 $net > 0 ? esc_html('約 ' . number_format($net) . ' 円') : '—'
             );
-            echo '</tr>';
+
+            echo '</li>';
         }
 
-        echo '</tbody></table>';
-        echo '<p><small>価格を0円のままにすると、チェックを入れても提供されません。'
-            . '受取額は保存後に反映されます。</small></p>';
+        echo '</ul>';
+
         echo '</div></div>';
     }
 

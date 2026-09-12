@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 8;
+    public const SCHEMA_VERSION = 9;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -187,6 +187,7 @@ final class Migrator
         self::rebuildCreatorBalances($from);
         self::recordListingModeration();
         self::useFullListingForm();
+        self::useLegacyProductEditor();
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
@@ -273,6 +274,42 @@ final class Migrator
             $selling['disable_product_popup'] = 'on';
             update_option('dokan_selling', $selling);
         }
+    }
+
+    /**
+     * One product editor, the one everything else is built on.
+     *
+     * Dokan 4.x ships two: the PHP form (dokan_get_navigation_url('new-product'),
+     * where the tab bar's 出品 goes) and a React editor at
+     * /dashboard/new/#products/{id}/edit. The site was set to the React one,
+     * so a creator CREATED a listing in the PHP form and EDITED it in the
+     * React one -- two different screens for one job.
+     *
+     * Everything built for creators hangs off the PHP form: the option
+     * pricing panel, the 受取設定 callout, and the button, image and label
+     * work the client reviewed. In the React editor none of it exists, so
+     * options could not be priced on an existing product at all.
+     *
+     * Pinned once. If the operator later chooses the React editor in Dokan's
+     * settings, the marker stops this putting it back -- the same rule as
+     * product_status.
+     */
+    private static function useLegacyProductEditor(): void
+    {
+        if (get_option('mk_product_editor_pinned') === 'yes') {
+            return;
+        }
+
+        $appearance = get_option('dokan_appearance', []);
+
+        if (!is_array($appearance)) {
+            $appearance = [];
+        }
+
+        $appearance['vendor_product_editor'] = 'legacy';
+
+        update_option('dokan_appearance', $appearance);
+        update_option('mk_product_editor_pinned', 'yes');
     }
 
     /**

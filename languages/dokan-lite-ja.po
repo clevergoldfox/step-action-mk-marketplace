@@ -1317,3 +1317,9 @@ msgstr "価格の高い順"
 
 msgid "Relevance"
 msgstr "関連度順"
+
+msgid "More Products"
+msgstr "このショップの他の商品"
+
+msgid "Vendor Info"
+msgstr "出品者情報"

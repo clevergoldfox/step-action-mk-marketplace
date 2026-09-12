@@ -964,13 +964,37 @@ check('option fee rate differs from product',
     "total={$b->total} fee={$b->platformFee} creator={$b->creatorAmount}");
 check('halves still sum exactly', $b->platformFee + $b->creatorAmount === $b->total);
 
+// The creator's per-product switch: hidden here, still offered elsewhere.
+$opProd2 = wp_insert_post(['post_type' => 'product', 'post_status' => 'draft',
+    'post_title' => 'MK smoke option product 2']);
+$opSvc->saveForProduct($opProd2, [$gid1 => ['offered' => true, 'price' => 700]]);
+$opSvc->saveForProduct($opProd,  [$gid1 => ['offered' => false, 'price' => 900]]);
+check('creator can hide an option on one product', count($opSvc->offeredFor($opProd)) === 0);
+check('the same option stays on another product', count($opSvc->offeredFor($opProd2)) === 1);
+
+$opSvc->saveForProduct($opProd, [$gid1 => ['offered' => true, 'price' => 900]]);
+check('re-showing keeps the price', (int) $opSvc->offeredFor($opProd)[0]->price === 900);
+
+// The panel the creator does that in.
+check('option panel on the creation form',
+    has_action('dokan_new_product_form', ['MK\Option\ProductPanel', 'render']) !== false);
+check('option panel on the edit form',
+    has_action('dokan_product_edit_after_options', ['MK\Option\ProductPanel', 'render']) !== false);
+
+ob_start(); MK\Option\ProductPanel::render(null, $opProd); $panel1 = (string) ob_get_clean();
+ob_start(); MK\Option\ProductPanel::render(null, $opProd); $panel2 = (string) ob_get_clean();
+check('panel offers a per-product 表示する toggle',
+    str_contains($panel1, '表示する') && str_contains($panel1, 'mk_option['));
+check('panel drawn once, not twice on the edit page', $panel2 === '');
+
 // Retiring a group hides it from new listings but keeps old orders legible.
 $opSvc->deactivateGroup($gid1);
 check('retired group not offered', count($opSvc->offeredFor($opProd)) === 0);
 check('retired group still exists',
     count(array_filter($opSvc->allGroups(), fn($g) => (int) $g->id === $gid1)) === 1);
 
-$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_product_options WHERE product_id=%d", $opProd));
+$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_product_options WHERE product_id IN (%d,%d)", $opProd, $opProd2));
+wp_delete_post($opProd2, true);
 $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_option_groups WHERE id IN (%d,%d)", $gid1, $gid2));
 wp_delete_post($opProd, true);
 check('option fixtures removed', !get_post($opProd));
@@ -1392,6 +1416,16 @@ check('other form parts still render', trim((string) ob_get_clean()) !== '');
 $sel = get_option('dokan_selling', []);
 check('single listing form (quick-add popup off)', ($sel['disable_product_popup'] ?? '') === 'on',
     $sel['disable_product_popup'] ?? '(unset)');
+
+// Creating and editing must open the same screen: the PHP form every
+// creator-facing feature is built on. Dokan's React editor has none of it.
+$app = get_option('dokan_appearance', []);
+check('one product editor (the one with our panels)',
+    ($app['vendor_product_editor'] ?? '') !== 'latest', $app['vendor_product_editor'] ?? '(unset)');
+
+$editUrl = dokan_edit_product_url(494);
+check('edit link goes to that form', is_string($editUrl) && str_contains($editUrl, 'action=edit'),
+    (string) $editUrl);
 
 echo "\n=== LINE rich-menu links ===\n";
 $lnBuyer  = wp_insert_user(['user_login' => 'mk_smoke_lnb_' . wp_rand(1000,9999),

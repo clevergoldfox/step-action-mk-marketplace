@@ -323,7 +323,9 @@ final class Controller
 
             foreach ($options as $option) {
                 printf(
-                    '<label style="display:block"><input type="checkbox" name="mk_options[]" value="%d"> %s（+%s）</label>',
+                    '<label class="mk-option"><input type="checkbox" name="mk_options[]" value="%d">'
+                    . '<span class="mk-option-name">%s</span>'
+                    . '<span class="mk-option-price">+%s</span></label>',
                     (int) $option->option_group_id,
                     esc_html($option->name),
                     esc_html(number_format((int) $option->price) . '円')
