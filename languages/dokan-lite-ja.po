@@ -1454,3 +1454,20 @@ msgstr "購入する（購入者として登録）"
 
 msgid "I am a vendor"
 msgstr "出品する（出品者として登録）"
+
+# --- seller registration fields (client review, 2026-09-13) ---
+
+msgid "First Name"
+msgstr "名（例：太郎）"
+
+msgid "Last Name"
+msgstr "姓（例：山田）"
+
+msgid "Shop Name"
+msgstr "ショップ名"
+
+msgid "Shop URL"
+msgstr "ショップのURL"
+
+msgid "Phone Number"
+msgstr "電話番号"
