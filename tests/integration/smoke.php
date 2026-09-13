@@ -1601,6 +1601,67 @@ check('already logged in: no second form', !str_contains($already, 'name="regist
 check('login page links to sign-up',
     str_contains((string) file_get_contents(get_stylesheet_directory() . '/woocommerce/myaccount/form-login.php'), 'mk-auth__switch'));
 
+echo "\n=== 利用規約への同意 ===\n";
+
+foreach (['customer' => '購入者', 'seller' => '出品者'] as $role => $who) {
+    $pageId = MK\Account\Terms::pageId($role);
+    check($who . '向け規約のページがある', $pageId > 0 && get_post_status($pageId) === 'publish',
+        $pageId > 0 ? get_the_title($pageId) : '(未設定)');
+}
+
+check('購入者と出品者で別の規約', MK\Account\Terms::url('customer') !== MK\Account\Terms::url('seller'));
+check('プライバシーポリシーが公開されている', MK\Account\Terms::privacyUrl() !== '',
+    MK\Account\Terms::privacyUrl() ?: '(未公開)');
+
+ob_start(); MK\Account\Terms::renderCheckbox(); $box = (string) ob_get_clean();
+check('同意チェックボックスがある', str_contains($box, 'name="mk_terms_agree"'));
+check('選んだ役割で規約リンクが変わる',
+    str_contains($box, 'data-buyer-url') && str_contains($box, 'data-seller-url')
+        && str_contains($box, MK\Account\Terms::url('seller')));
+check('プライバシーポリシーにもリンク', str_contains($box, MK\Account\Terms::privacyUrl()));
+
+// The check that decides: a browser's `required` attribute is a hint, and
+// a registration that skipped it must not be possible.
+unset($_POST['mk_terms_agree']);
+$errors = new WP_Error();
+MK\Account\Terms::validate('u', 'u@example.invalid', $errors);
+check('未同意なら登録を拒否する', $errors->has_errors(), $errors->get_error_message('mk_terms_required'));
+
+$_POST['mk_terms_agree'] = '1';
+$ok = new WP_Error();
+MK\Account\Terms::validate('u', 'u@example.invalid', $ok);
+check('同意すれば通る', !$ok->has_errors());
+unset($_POST['mk_terms_agree']);
+
+// What was agreed to has to survive on the account.
+$termsUser = wp_insert_user(['user_login' => 'mk_smoke_terms_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (!is_wp_error($termsUser)) {
+    MK\Account\Terms::stamp($termsUser, 'seller');
+
+    check('同意の記録が残る',
+        get_user_meta($termsUser, MK\Account\Terms::META_AGREED_AT, true) !== ''
+            && get_user_meta($termsUser, MK\Account\Terms::META_AGREED_ROLE, true) === 'seller'
+            && (int) get_user_meta($termsUser, MK\Account\Terms::META_AGREED_PAGE, true) === MK\Account\Terms::pageId('seller'));
+    check('その時点の規約の更新日も残る',
+        get_user_meta($termsUser, MK\Account\Terms::META_PAGE_EDITED, true) !== '');
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($termsUser);
+}
+
+// Becoming a seller later is agreeing to the seller terms.
+$_POST['dokan_migration'] = 'Become a Vendor';
+MK\Account\Terms::guardMigration();
+check('未同意の出品者登録は止まる', !isset($_POST['dokan_migration']));
+
+$_POST['dokan_migration'] = 'Become a Vendor';
+$_POST['mk_terms_agree']  = '1';
+MK\Account\Terms::guardMigration();
+check('同意していれば進む', isset($_POST['dokan_migration']));
+unset($_POST['dokan_migration'], $_POST['mk_terms_agree']);
+
 echo "\n=== LINE rich-menu links ===\n";
 $lnBuyer  = wp_insert_user(['user_login' => 'mk_smoke_lnb_' . wp_rand(1000,9999),
     'user_pass' => wp_generate_password(24), 'role' => 'customer']);

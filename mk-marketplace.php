@@ -121,6 +121,8 @@ add_action('plugins_loaded', static function (): void {
     Creator\Search::register();
     Checkout\Controller::register();
     Account\Registration::register();
+    Account\Terms::register();
+    Account\TermsAdmin::register();
     Notify\Events::register();
     Option\Admin::register();
     Fee\Admin::register();
