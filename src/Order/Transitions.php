@@ -16,6 +16,7 @@ use WC_Order;
  * ends up scheduled twice, or cancelled by one path and left running by
  * another. One hook, one switch, one place to read when a payout misbehaves.
  *
+ *   pending   -> paid        schedule the dispatch deadline (+1-7d, promised)
  *   paid      -> shipped     schedule auto-complete   (+7d)
  *   shipped   -> received    schedule transfer        (+7d or +14d)
  *   received  -> completed   schedule address masking (+30d)
@@ -35,6 +36,7 @@ final class Transitions
         // are already in. Normalising anyway costs nothing and keeps the
         // match correct if a caller ever passes the wc- spelling through.
         match (Statuses::bare($to)) {
+            Statuses::PAID     => self::onPaid($order),
             Statuses::SHIPPED  => self::onShipped($order),
             Statuses::RECEIVED => self::onReceived($order),
             'completed'        => self::onCompleted($order),
@@ -44,8 +46,30 @@ final class Transitions
         };
     }
 
+    /**
+     * Money captured, so the creator's clock starts.
+     *
+     * The obligation to post the item begins at payment, not at checkout: an
+     * order that never completed payment asks nothing of the creator.
+     */
+    private static function onPaid(WC_Order $order): void
+    {
+        DispatchDeadline::start($order);
+
+        $order->add_order_note(sprintf(
+            'お支払いを確認しました。出品時の発送目安（%s）に基づき、発送期限を %s に設定しました。',
+            \MK\Product\Details::dispatchLabel((string) $order->get_meta(DispatchDeadline::META_DISPATCH)),
+            DispatchDeadline::dueLabel($order)
+        ));
+        $order->save();
+    }
+
     private static function onShipped(WC_Order $order): void
     {
+        // Posted, on time or late; either way nothing is waiting on the
+        // deadline any more.
+        Jobs::cancelDispatchOverdue($order->get_id());
+
         Jobs::scheduleAutoComplete($order->get_id());
 
         $days = (int) get_option('mk_auto_complete_days', 7);
@@ -112,6 +136,7 @@ final class Transitions
     {
         Jobs::cancelAutoComplete($order->get_id());
         Jobs::cancelTransfer($order->get_id());
+        Jobs::cancelDispatchOverdue($order->get_id());
 
         $productId = (int) $order->get_meta('_mk_product_id');
 
@@ -127,6 +152,7 @@ final class Transitions
     {
         Jobs::cancelAutoComplete($order->get_id());
         Jobs::cancelTransfer($order->get_id());
+        Jobs::cancelDispatchOverdue($order->get_id());
 
         // Deliberately NOT calling refundAndReverse() here.
         //

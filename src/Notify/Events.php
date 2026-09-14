@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace MK\Notify;
 
+use MK\Order\DispatchDeadline;
 use MK\Order\Shipping;
 use MK\Order\Statuses;
 use MK\Support\Money;
@@ -28,6 +29,8 @@ final class Events
         add_action('woocommerce_order_status_changed', [self::class, 'onStatusChanged'], 20, 4);
         add_action('mk_message_sent', [self::class, 'onMessage'], 10, 4);
         add_action('mk_report_opened', [self::class, 'onReport'], 10, 3);
+        add_action('mk_dispatch_overdue', [self::class, 'onDispatchOverdue'], 10, 2);
+        add_action('mk_creator_repeatedly_late', [self::class, 'onRepeatedlyLate'], 10, 2);
         add_action('mk_transfer_sent', [self::class, 'onTransferSent'], 10, 3);
         add_action('transition_post_status', [self::class, 'onListingStatus'], 10, 3);
     }
@@ -190,6 +193,100 @@ final class Events
             url: dokan_get_navigation_url('orders'),
             context: ['order_id' => $order->get_id()],
         ));
+    }
+
+    /**
+     * The promised dispatch date passed with nothing posted.
+     *
+     * Both sides, deliberately. The creator is the only one who can fix it,
+     * and the buyer is the only one who can decide whether to keep waiting --
+     * and they cannot decide that if nobody tells them the deadline has gone.
+     * This is the one place the usual "do not tell the reported party" rule
+     * does not apply, because nobody has reported anything yet: the creator is
+     * being reminded of their own promise, not accused.
+     */
+    public static function onDispatchOverdue(int $orderId, int $creatorId): void
+    {
+        $order = wc_get_order($orderId);
+
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+
+        $title = (string) $order->get_meta('_mk_title_snapshot');
+        $due   = DispatchDeadline::dueLabel($order);
+
+        Dispatcher::send(new Notification(
+            type: 'dispatch.overdue.creator',
+            userId: $creatorId,
+            subject: '【重要】発送期限を過ぎています',
+            body: sprintf(
+                "ご注文 #%d（%s）の発送期限（%s）を過ぎていますが、発送登録が確認できません。\n\n"
+                . "至急、出品者ダッシュボードから発送登録を行ってください。\n\n"
+                . "期限を過ぎているため、購入者はこの取引のキャンセルを申請できる状態です。"
+                . "キャンセルとなった場合、この取引の売上はお支払いできません。\n"
+                . "発送の遅れが繰り返される場合、出品を制限させていただくことがあります。",
+                $orderId,
+                $title,
+                $due
+            ),
+            short: sprintf('注文 #%d の発送期限を過ぎています。至急ご対応ください。', $orderId),
+            url: dokan_get_navigation_url('orders'),
+            context: ['order_id' => $orderId],
+        ));
+
+        Dispatcher::send(new Notification(
+            type: 'dispatch.overdue.buyer',
+            userId: $order->get_customer_id(),
+            subject: '発送予定日を過ぎています',
+            body: sprintf(
+                "ご注文 #%d（%s）について、出品者がお約束した発送期限（%s）を過ぎましたが、"
+                . "発送の登録が確認できておりません。\n\n"
+                . "出品者へは発送を促す通知をお送りしました。\n\n"
+                . "もう少しお待ちいただくこともできますが、キャンセルをご希望の場合は、"
+                . "注文詳細ページから「キャンセルを申請する」をお選びください。"
+                . "運営が状況を確認のうえ、キャンセル・ご返金の対応を行います。\n\n"
+                . "お支払いいただいた代金は、出品者へはまだお渡ししておりません。ご安心ください。",
+                $orderId,
+                $title,
+                $due
+            ),
+            short: sprintf('注文 #%d が発送期限を過ぎています。キャンセル申請が可能です。', $orderId),
+            url: $order->get_view_order_url(),
+            context: ['order_id' => $orderId],
+        ));
+    }
+
+    /**
+     * A creator who is late again and again.
+     *
+     * Reported to the operator rather than acted on. Suspending someone is a
+     * judgement about intent -- illness, a holiday, or someone taking money
+     * for things they never post -- and the counter cannot tell those apart.
+     */
+    public static function onRepeatedlyLate(int $creatorId, int $count): void
+    {
+        $creator = get_userdata($creatorId);
+
+        foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
+            Dispatcher::send(new Notification(
+                type: 'creator.late.repeated',
+                userId: (int) $adminId,
+                subject: '発送遅延が続いている出品者がいます',
+                body: sprintf(
+                    "出品者「%s」の発送期限超過が %d 件になりました。\n\n"
+                    . "内容をご確認のうえ、必要に応じて出品制限をご検討ください。\n"
+                    . "出品制限を設定すると、その出品者は新たに商品を公開できなくなります"
+                    . "（進行中の取引と発送登録は制限されません）。",
+                    $creator ? $creator->display_name : '#' . $creatorId,
+                    $count
+                ),
+                short: sprintf('出品者「%s」の発送遅延が %d 件になりました。',
+                    $creator ? $creator->display_name : '#' . $creatorId, $count),
+                url: admin_url('admin.php?page=mk-creators'),
+                context: ['creator_id' => $creatorId],
+            ));
+        }
     }
 
     /** Raised by TransferService once the money has actually gone. */

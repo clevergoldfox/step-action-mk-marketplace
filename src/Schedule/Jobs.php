@@ -24,6 +24,7 @@ final class Jobs
     public const AUTO_COMPLETE  = 'mk_auto_complete_order';
     public const EXECUTE_TRANSFER = 'mk_execute_transfer';
     public const MASK_ADDRESS   = 'mk_mask_shipping_address';
+    public const DISPATCH_OVERDUE = 'mk_dispatch_overdue_check';
     public const DAILY_DIGEST   = 'mk_send_daily_digest';
     public const SWEEP_RESERVATIONS = 'mk_sweep_reservations';
 
@@ -37,6 +38,7 @@ final class Jobs
         add_action(self::AUTO_COMPLETE, [self::class, 'runAutoComplete'], 10, 1);
         add_action(self::EXECUTE_TRANSFER, [self::class, 'runTransfer'], 10, 1);
         add_action(self::MASK_ADDRESS, [self::class, 'runMaskAddress'], 10, 1);
+        add_action(self::DISPATCH_OVERDUE, [self::class, 'runDispatchOverdue'], 10, 1);
         add_action(self::SWEEP_RESERVATIONS, [self::class, 'runSweepReservations']);
 
         add_action('init', [self::class, 'ensureRecurringScheduled']);
@@ -139,6 +141,30 @@ final class Jobs
         }
 
         return $days;
+    }
+
+    /**
+     * Check, at the promised dispatch date, whether the parcel went out.
+     *
+     * The timestamp is passed in rather than computed here: the deadline is
+     * the one snapshotted on the order at purchase, and recomputing it from
+     * options would quietly disagree with the date the buyer was shown.
+     */
+    public static function scheduleDispatchOverdue(int $orderId, int $dueAt): void
+    {
+        self::cancelDispatchOverdue($orderId);
+
+        as_schedule_single_action(
+            $dueAt,
+            self::DISPATCH_OVERDUE,
+            ['order_id' => $orderId],
+            self::GROUP
+        );
+    }
+
+    public static function cancelDispatchOverdue(int $orderId): void
+    {
+        as_unschedule_all_actions(self::DISPATCH_OVERDUE, ['order_id' => $orderId], self::GROUP);
     }
 
     /** Hide the buyer's address from the creator once the sale is history. */
@@ -284,6 +310,23 @@ final class Jobs
         if ($released > 0) {
             error_log(sprintf('[mk-marketplace] released %d expired reservations', $released));
         }
+    }
+
+    /**
+     * The promised dispatch date has arrived.
+     *
+     * The decision of whether anything is actually late, and what follows from
+     * it, belongs with the deadline itself -- this is only the alarm clock.
+     */
+    public static function runDispatchOverdue(int $orderId): void
+    {
+        $order = wc_get_order($orderId);
+
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+
+        \MK\Order\DispatchDeadline::markOverdue($order);
     }
 
     public static function runMaskAddress(int $orderId): void

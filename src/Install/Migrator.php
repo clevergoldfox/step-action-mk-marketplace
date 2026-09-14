@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 10;
+    public const SCHEMA_VERSION = 11;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -213,6 +213,10 @@ final class Migrator
             'mk_new_creator_threshold' => 3,
             'mk_high_value_threshold'  => 50_000,
             'mk_shipping_mask_days'    => 30,
+            // How many missed dispatch deadlines make a pattern worth the
+            // operator's attention. Nothing happens automatically at this
+            // number -- it is when they are told. See Creator\Restriction.
+            'mk_late_dispatch_threshold' => 3,
         ];
 
         foreach ($defaults as $key => $value) {

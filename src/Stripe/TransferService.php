@@ -30,6 +30,7 @@ final class TransferService
     public const META_TRANSFER_ID = '_mk_stripe_transfer_id';
     public const META_STATUS      = '_mk_transfer_status';
     public const META_REVERSED    = '_mk_reversed_amount';
+    public const META_REFUND_ID   = '_mk_stripe_refund_id';
 
     public const STATUS_PENDING  = 'pending';
     public const STATUS_SENT     = 'sent';
@@ -295,7 +296,34 @@ final class TransferService
      * entirely: the old code assumed a reversal always succeeded in full and
      * charged only the processing fee, so a creator whose balance was empty
      * kept their whole share and the platform silently ate it.
+     *
+     * It is also the term that has to know whether a transfer ever HAPPENED.
+     * "Unrecovered" was computed as the creator's share minus whatever came
+     * back, which on an order that was never paid out is the creator's entire
+     * share -- money they never received, billed to them as a debt against
+     * their next sale. Cancelling an undelivered order before dispatch is the
+     * most common unwind there is, and it was charging the creator the full
+     * value of a sale they were never paid for. Found on the first real
+     * cancellation run through the new 発送期限 flow (¥2,639 against a creator
+     * who had received nothing).
      */
+    /**
+     * How much of the creator's share the platform is out by, after a reversal.
+     *
+     * Public and separate because it is the one line of this class that can be
+     * checked without moving money, and because it is the line that was wrong:
+     * a creator who was never paid owes nothing back, however little came back
+     * from a reversal that never happened.
+     */
+    public static function unrecoverableShare(WC_Order $order, int $reversedAmount): int
+    {
+        if ((string) $order->get_meta(self::META_TRANSFER_ID) === '') {
+            return 0;
+        }
+
+        return max(0, (int) $order->get_meta('_mk_creator_amount') - $reversedAmount);
+    }
+
     private function recordUnwind(
         WC_Order $order,
         int $reversedAmount,
@@ -316,8 +344,8 @@ final class TransferService
             );
         }
 
-        $creatorShare = (int) $order->get_meta('_mk_creator_amount');
-        $unrecovered  = max(0, $creatorShare - $reversedAmount);
+        $paidOut     = (string) $order->get_meta(self::META_TRANSFER_ID) !== '';
+        $unrecovered = self::unrecoverableShare($order, $reversedAmount);
 
         $shortfall = $this->stripeFeeFor($order) + $additionalCost + $unrecovered;
 
@@ -335,11 +363,26 @@ final class TransferService
             );
         }
 
-        $order->add_order_note(sprintf(
-            '返金処理を実行しました。巻き戻し %s / 未回収額 %s をクリエイターの次回売上から控除します。',
-            Money::format($reversedAmount),
-            Money::format($shortfall)
-        ));
+        // The refund's own id, on the order. The ledger carried it as a
+        // reference, but only when there was a shortfall to record -- so a
+        // clean refund left nothing on the order to reconcile against Stripe.
+        if ($refundId !== null) {
+            $order->update_meta_data(self::META_REFUND_ID, $refundId);
+        }
+
+        $order->add_order_note(
+            $paidOut
+                ? sprintf(
+                    '返金処理を実行しました。巻き戻し %s / 未回収額 %s をクリエイターの次回売上から控除します。',
+                    Money::format($reversedAmount),
+                    Money::format($shortfall)
+                )
+                : sprintf(
+                    '返金処理を実行しました。送金前のため巻き戻しはありません。'
+                    . '決済手数料など %s をクリエイターの次回売上から控除します。',
+                    Money::format($shortfall)
+                )
+        );
         $order->save();
     }
 

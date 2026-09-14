@@ -201,7 +201,15 @@ final class Service
         $order->update_meta_data(self::ORDER_FLAG, 'no');
 
         if (!$releasePayout) {
-            $order->add_order_note('通報を解決済みとしましたが、送金は保留したままです。返金対応を行ってください。');
+            // Two quite different situations share this branch: the operator
+            // intends to refund, and the operator has just refunded. Telling
+            // them to go and do what they have already done is how a correct
+            // order history reads as a broken one.
+            $refunded = (string) $order->get_meta(TransferService::META_REFUND_ID) !== '';
+
+            $order->add_order_note($refunded
+                ? '返金対応が完了しているため、通報を解決済みとしました。出品者への送金は行いません。'
+                : '通報を解決済みとしましたが、送金は保留したままです。返金対応を行ってください。');
             $order->save();
 
             return;
@@ -243,6 +251,27 @@ final class Service
                 self::STATUS_RESOLVED
             )
         );
+    }
+
+    /**
+     * The unresolved reports against one thing.
+     *
+     * @return array<int, object>
+     */
+    public function openFor(string $targetType, int $targetId): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}mk_reports
+                  WHERE target_type = %s AND target_id = %d AND status <> %s
+               ORDER BY id ASC",
+                $targetType,
+                $targetId,
+                self::STATUS_RESOLVED
+            )
+        ) ?: [];
     }
 
     /**

@@ -1707,6 +1707,268 @@ if (is_wp_error($lnBuyer) || is_wp_error($lnSeller)) {
     check('LINE fixtures removed', !get_userdata($lnBuyer) && !get_userdata($lnSeller));
 }
 
+echo "\n=== 状態ランク・発送目安（出品フォーム／商品ページ） ===\n";
+
+$conditions = MK\Product\Details::conditions();
+check('状態ランクは A〜D の4段階', array_keys($conditions) === ['A', 'B', 'C', 'D'],
+    implode(',', array_keys($conditions)));
+check('A の表記が依頼どおり',
+    $conditions['A']['label'] === 'A｜非常に良い'
+        && $conditions['A']['description'] === '使用感がほとんどなく、目立つ傷・汚れがない状態');
+check('D の表記が依頼どおり',
+    $conditions['D']['label'] === 'D｜傷・汚れあり'
+        && $conditions['D']['description'] === '目立つ傷・汚れ・使用感などあり');
+
+$dispatch = MK\Product\Details::dispatchOptions();
+check('発送目安は3種類', array_keys($dispatch) === ['1-2', '2-3', '4-7'],
+    implode(',', array_keys($dispatch)));
+check('1〜2日 は最長2日として期限を計算', MK\Product\Details::dispatchDays('1-2') === 2);
+check('4〜7日 は最長7日として期限を計算', MK\Product\Details::dispatchDays('4-7') === 7);
+// Listings made before this feature existed still have to produce a deadline,
+// or their orders would sit with no clock at all.
+check('未設定の商品も既定値で期限を持つ',
+    MK\Product\Details::dispatchDays('') === MK\Product\Details::dispatchDays(MK\Product\Details::DEFAULT_DISPATCH));
+
+ob_start(); MK\Product\Details::renderFields(null, 0); $form = (string) ob_get_clean();
+check('出品フォームに状態ランクの選択がある', str_contains($form, 'name="mk_condition"'));
+check('出品フォームに発送日数の選択がある', str_contains($form, 'name="mk_dispatch"'));
+check('状態ランクの説明も選択肢に出る', str_contains($form, '通常使用には問題ない状態'));
+check('発送期限の意味がフォームに書いてある', str_contains($form, 'キャンセルを申請できます'));
+
+$detailProduct = wp_insert_post([
+    'post_title'  => 'mk smoke 状態ランク',
+    'post_type'   => 'product',
+    'post_status' => 'draft',
+]);
+
+if (is_wp_error($detailProduct)) {
+    check('create detail fixture', false, $detailProduct->get_error_message());
+} else {
+    update_post_meta($detailProduct, MK\Product\Details::META_CONDITION, 'B');
+    update_post_meta($detailProduct, MK\Product\Details::META_DISPATCH, '4-7');
+
+    check('保存した状態ランクを読み戻せる', MK\Product\Details::conditionOf($detailProduct) === 'B');
+    check('保存した発送目安を読み戻せる', MK\Product\Details::dispatchOf($detailProduct) === '4-7');
+
+    // Anything not in our list is not a grade, whoever posted it.
+    update_post_meta($detailProduct, MK\Product\Details::META_CONDITION, 'Z');
+    check('知らない状態ランクは無視する', MK\Product\Details::conditionOf($detailProduct) === '');
+    update_post_meta($detailProduct, MK\Product\Details::META_CONDITION, 'B');
+
+    $GLOBALS['product'] = wc_get_product($detailProduct);
+    ob_start(); MK\Product\Details::renderOnProduct(); $page = (string) ob_get_clean();
+    unset($GLOBALS['product']);
+
+    check('商品ページに状態ランクが出る', str_contains($page, 'B｜良好'));
+    check('商品ページに説明文も出る', str_contains($page, '目立つ傷・汚れが少なく'));
+    check('商品ページに発送目安が出る', str_contains($page, '4〜7日で発送'));
+
+    wp_delete_post($detailProduct, true);
+}
+
+echo "\n=== 発送期限・期限超過・キャンセル申請 ===\n";
+
+// Notifications are suppressed for the duration: this runs against the real
+// site, and a smoke test must not post mail to real creators and buyers.
+$muted = static fn (): bool => false;
+add_filter('mk_should_notify', $muted, 99);
+
+$lateSeller = wp_insert_user(['user_login' => 'mk_smoke_late_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+$deadlineOrder = wc_create_order();
+
+if (is_wp_error($lateSeller) || is_wp_error($deadlineOrder)) {
+    check('create deadline fixtures', false, 'fixture setup failed');
+} else {
+    $deadlineOrder->update_meta_data('_mk_creator_id', $lateSeller);
+    $deadlineOrder->update_meta_data('_mk_title_snapshot', 'mk smoke 発送期限');
+    $deadlineOrder->update_meta_data(MK\Order\DispatchDeadline::META_DISPATCH, '1-2');
+    $deadlineOrder->set_status(MK\Order\Statuses::PAID);
+    $deadlineOrder->save();
+
+    $deadlineId = $deadlineOrder->get_id();
+
+    MK\Order\DispatchDeadline::start($deadlineOrder);
+    $deadlineOrder = wc_get_order($deadlineId);
+
+    $due = strtotime((string) $deadlineOrder->get_meta(MK\Order\DispatchDeadline::META_DUE_AT) . ' UTC');
+
+    check('支払い確認から約2日後が期限', abs($due - (time() + 2 * DAY_IN_SECONDS)) < 120,
+        gmdate('Y-m-d H:i', $due));
+    check('期限の見張りが予約されている',
+        as_next_scheduled_action(MK\Schedule\Jobs::DISPATCH_OVERDUE, ['order_id' => $deadlineId], 'mk-marketplace') !== false);
+    check('期限前は超過扱いにならない', !MK\Order\DispatchDeadline::isOverdue($deadlineOrder));
+
+    // Wind the deadline back into the past: the alarm is what we are testing,
+    // not Action Scheduler's ability to count to two days.
+    $deadlineOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT, gmdate('Y-m-d H:i:s', time() - HOUR_IN_SECONDS));
+    $deadlineOrder->save();
+
+    check('期限を過ぎれば超過扱いになる', MK\Order\DispatchDeadline::isOverdue($deadlineOrder));
+
+    $before = MK\Order\DispatchDeadline::lateCount($lateSeller);
+
+    MK\Order\DispatchDeadline::markOverdue($deadlineOrder);
+    $deadlineOrder = wc_get_order($deadlineId);
+
+    check('超過を記録する', $deadlineOrder->get_meta(MK\Order\DispatchDeadline::META_OVERDUE_AT) !== '');
+    check('出品者の遅延件数が1件増える',
+        MK\Order\DispatchDeadline::lateCount($lateSeller) === $before + 1,
+        (string) MK\Order\DispatchDeadline::lateCount($lateSeller));
+
+    // Action Scheduler retries a job whose later steps failed. Counting the
+    // same lateness twice would push a creator towards 出品制限 for one parcel.
+    MK\Order\DispatchDeadline::markOverdue($deadlineOrder);
+    check('再実行しても二重に数えない',
+        MK\Order\DispatchDeadline::lateCount($lateSeller) === $before + 1);
+
+    // Rendered as the creator: the panel is theirs, and it refuses to render
+    // for anyone else -- which is the reason this line exists.
+    wp_set_current_user($lateSeller);
+    ob_start(); MK\Order\DispatchDeadline::renderForCreator($deadlineOrder); $creatorView = (string) ob_get_clean();
+    wp_set_current_user(0);
+    check('出品者側に期限超過の警告が出る', str_contains($creatorView, '発送期限'), '');
+
+    // Shipping late still clears the alarm: the parcel is gone, so there is
+    // nothing left for the job to check.
+    MK\Schedule\Jobs::cancelDispatchOverdue($deadlineId);
+    check('発送登録で期限の見張りが消える',
+        as_next_scheduled_action(MK\Schedule\Jobs::DISPATCH_OVERDUE, ['order_id' => $deadlineId], 'mk-marketplace') === false);
+
+    // The cancellation request is a 通報 of this reason; the payout freeze and
+    // the operator queue come with it for free.
+    check('キャンセル申請の理由が用意されている',
+        isset(MK\Report\Service::reasons()['not_shipped']),
+        MK\Report\Service::reasonLabel('not_shipped'));
+
+    $reports  = new MK\Report\Service();
+    $reportId = $reports->open(1, MK\Report\Service::TARGET_ORDER,
+        $deadlineId, 'not_shipped', '【キャンセル申請】smoke test');
+
+    $deadlineOrder = wc_get_order($deadlineId);
+
+    check('申請で送金が保留される',
+        $deadlineOrder->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
+    check('未対応の申請を注文から引ける',
+        count($reports->openFor(MK\Report\Service::TARGET_ORDER, $deadlineId)) === 1);
+
+    $reports->resolve($reportId, 1, 'smoke test', false);
+    check('運営が閉じれば未対応から消える',
+        $reports->openFor(MK\Report\Service::TARGET_ORDER, $deadlineId) === []);
+
+    global $wpdb;
+    $wpdb->delete($wpdb->prefix . 'mk_reports', ['id' => $reportId], ['%d']);
+
+        echo "\n=== キャンセル時にクリエイターへ請求される額 ===\n";
+
+    // The bug this guards against: cancelling an order that was never paid
+    // out billed the creator the whole value of the sale, as an "unrecovered"
+    // amount deducted from their next payout. Undelivered-item cancellations
+    // are always pre-payout, so this was the common case, not the edge.
+    $unwind = wc_create_order();
+
+    if (is_wp_error($unwind)) {
+        check('create unwind fixture', false, 'fixture setup failed');
+    } else {
+        $unwind->update_meta_data('_mk_creator_id', $lateSeller);
+        $unwind->update_meta_data('_mk_creator_amount', 2520);
+        $unwind->save();
+
+        check('送金前のキャンセルは出品者に請求しない',
+            MK\Stripe\TransferService::unrecoverableShare($unwind, 0) === 0,
+            (string) MK\Stripe\TransferService::unrecoverableShare($unwind, 0));
+
+        // Once the money HAS gone out, whatever could not be clawed back is
+        // genuinely owed, and that is the case the calculation exists for.
+        $unwind->update_meta_data(MK\Stripe\TransferService::META_TRANSFER_ID, 'tr_smoke');
+        $unwind->save();
+
+        check('送金後に全額戻れば請求なし',
+            MK\Stripe\TransferService::unrecoverableShare($unwind, 2520) === 0);
+        check('送金後に一部しか戻らなければ差額を請求',
+            MK\Stripe\TransferService::unrecoverableShare($unwind, 1000) === 1520,
+            (string) MK\Stripe\TransferService::unrecoverableShare($unwind, 1000));
+        check('戻り額が多くてもマイナス請求にはしない',
+            MK\Stripe\TransferService::unrecoverableShare($unwind, 9999) === 0);
+
+        $unwind->delete(true);
+    }
+
+echo "\n=== 出品制限（運営操作） ===\n";
+
+    check('初期状態は制限なし', !MK\Creator\Restriction::isRestricted($lateSeller));
+
+    $allowed = MK\Creator\Restriction::gate(
+        ['post_type' => 'product', 'post_status' => 'publish', 'post_author' => $lateSeller],
+        []
+    );
+    check('制限していない出品者は公開できる', $allowed['post_status'] === 'publish');
+
+    // The listing has to exist as published before the restriction, which is
+    // what PublishGate would otherwise prevent for a creator with no Stripe
+    // account -- a different rule, tested elsewhere.
+    remove_filter('wp_insert_post_data', ['MK\Product\PublishGate', 'gate'], 10);
+    remove_filter('wp_insert_post_data', ['MK\Creator\Restriction', 'gate'], 20);
+
+    $liveProduct = wp_insert_post([
+        'post_title'  => 'mk smoke 出品制限',
+        'post_type'   => 'product',
+        'post_status' => 'publish',
+        'post_author' => $lateSeller,
+    ]);
+
+    add_filter('wp_insert_post_data', ['MK\Creator\Restriction', 'gate'], 20, 2);
+
+    check('準備：公開中の商品がある', get_post_status($liveProduct) === 'publish',
+        (string) get_post_status($liveProduct));
+
+    MK\Creator\Restriction::set($lateSeller, true, 'smoke test');
+
+    check('制限すると公開中の商品が下書きに戻る', get_post_status($liveProduct) === 'draft',
+        (string) get_post_status($liveProduct));
+    check('下書きに戻した理由が残る',
+        get_post_meta($liveProduct, MK\Creator\Restriction::META_BLOCKED, true) === 'yes');
+
+    $blocked = MK\Creator\Restriction::gate(
+        ['post_type' => 'product', 'post_status' => 'publish', 'post_author' => $lateSeller],
+        []
+    );
+    check('制限中は新規公開もできない', $blocked['post_status'] === 'draft');
+
+    $pendingBlocked = MK\Creator\Restriction::gate(
+        ['post_type' => 'product', 'post_status' => 'pending', 'post_author' => $lateSeller],
+        []
+    );
+    check('審査申請も止まる', $pendingBlocked['post_status'] === 'draft');
+
+    // Existing sales must keep working: cutting off a restricted creator's
+    // ability to post a parcel would punish the buyer, not the creator.
+    check('制限中でも発送登録は止めない',
+        has_action('dokan_order_detail_after_order_items', ['MK\Order\Shipping', 'renderForm']) !== false);
+
+    wp_set_current_user($lateSeller);
+    ob_start(); MK\Creator\Restriction::notice(); $restrictNotice = (string) ob_get_clean();
+    wp_set_current_user(0);
+    check('出品者に制限中であることを伝える', str_contains($restrictNotice, '制限'));
+
+    MK\Creator\Restriction::set($lateSeller, false);
+    check('解除できる', !MK\Creator\Restriction::isRestricted($lateSeller));
+
+    add_filter('wp_insert_post_data', ['MK\Product\PublishGate', 'gate'], 10, 2);
+
+    wp_delete_post($liveProduct, true);
+    $deadlineOrder->delete(true);
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($lateSeller);
+
+    check('後始末：テスト用の出品者と注文を削除',
+        !get_userdata($lateSeller) && !wc_get_order($deadlineId));
+}
+
+remove_filter('mk_should_notify', $muted, 99);
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');

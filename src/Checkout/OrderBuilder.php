@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace MK\Checkout;
 
+use MK\Order\DispatchDeadline;
+use MK\Product\Details;
 use MK\Product\Reservation;
 use MK\Stripe\AccountService;
 use MK\Support\Money;
@@ -106,6 +108,15 @@ final class OrderBuilder
         $order->update_meta_data('_mk_title_snapshot', $product->get_name());
         $order->update_meta_data('_mk_option_snapshot', $optionLabel);
         $order->update_meta_data('_mk_has_open_report', 'no');
+
+        // The two claims the buyer decided on, frozen at the moment they
+        // decided. Read live afterwards, a creator could re-grade a disputed
+        // item or stretch their own dispatch deadline by editing the listing.
+        $order->update_meta_data(
+            DispatchDeadline::META_DISPATCH,
+            Details::dispatchOf($product->get_id()) ?: Details::DEFAULT_DISPATCH
+        );
+        $order->update_meta_data(Details::META_CONDITION, Details::conditionOf($product->get_id()));
 
         $order->set_currency('JPY');
         $order->calculate_totals(false); // false: no tax recalculation

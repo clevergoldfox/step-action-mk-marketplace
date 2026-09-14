@@ -116,9 +116,12 @@ add_action('plugins_loaded', static function (): void {
     Order\Guard::register();
     Order\Shipping::register();
     Order\Receipt::register();
+    Order\DispatchDeadline::register();
+    Order\CancelAdmin::register();
     Creator\Onboarding::register();
     Creator\ShopName::register();
     Creator\Search::register();
+    Creator\Restriction::register();
     Checkout\Controller::register();
     Account\Registration::register();
     Account\Terms::register();
@@ -135,6 +138,7 @@ add_action('plugins_loaded', static function (): void {
     Product\PublishGate::register();
     Product\Approval::register();
     Product\ListingForm::register();
+    Product\Details::register();
     Schedule\Jobs::register();
     Line\Links::register();
 
