@@ -371,13 +371,13 @@ msgid "Price"
 msgstr "価格"
 
 msgid "Tags"
-msgstr "タグ"
+msgstr "商品の特徴・キーワード"
 
 msgid "Short Description"
-msgstr "簡単な説明"
+msgstr "商品について一言"
 
 msgid "Description"
-msgstr "商品説明"
+msgstr "商品の詳しい説明"
 
 msgid "Downloadable"
 msgstr "ダウンロード商品"
@@ -885,7 +885,7 @@ msgid "Manage inventory for this product."
 msgstr "この商品の在庫を管理する"
 
 msgid "(Stock Keeping Unit)"
-msgstr "（管理用の番号）"
+msgstr "（商品ごとに重複しない番号。他の出品者と同じ番号は登録できません）"
 
 msgid "On Backorder"
 msgstr "取り寄せ中"
@@ -1471,3 +1471,9 @@ msgstr "ショップのURL"
 
 msgid "Phone Number"
 msgstr "電話番号"
+
+msgid "Product SKU must be unique"
+msgstr "商品番号（SKU）は他の商品と重複しない番号をご入力ください。"
+
+msgid "Error"
+msgstr "エラー"

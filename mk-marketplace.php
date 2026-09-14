@@ -140,6 +140,7 @@ add_action('plugins_loaded', static function (): void {
     Product\PriceGate::register();
     Product\Approval::register();
     Product\ListingForm::register();
+    Product\FormGuide::register();
     Product\Details::register();
     Schedule\Jobs::register();
     Line\Links::register();

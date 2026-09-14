@@ -26,6 +26,23 @@ final class ListingForm
      */
     private const HIDDEN_PARTS = [
         'products/product-brand',
+
+        /*
+         * products/download-virtual -- the ダウンロード商品 and 配送なし
+         * checkboxes.
+         *
+         * WooCommerce's switches for digital goods and for services. Every
+         * listing on this marketplace is a physical second-hand object that
+         * gets posted, so neither has a meaning here, and a seller who ticks
+         * 配送なし produces a listing with no address, no dispatch deadline
+         * and nothing to receive -- the two features the whole transaction is
+         * built around silently do not apply.
+         *
+         * Hidden here and forced off on save in Product\FormGuide, because a
+         * field that is merely absent from a form is still a value a REST
+         * call can set.
+         */
+        'products/download-virtual',
     ];
 
     public static function register(): void

@@ -1977,6 +1977,129 @@ echo "\n=== 出品制限（運営操作） ===\n";
 
 remove_filter('mk_should_notify', $muted, 99);
 
+echo "\n=== 出品フォームの案内 ===\n";
+
+$guideSeller = get_user_by('login', 'mk_test_creator');
+$guideSeller = $guideSeller ? (int) $guideSeller->ID : 0;
+
+if ($guideSeller === 0) {
+    check('create guide fixture', false, 'no seller to test with');
+} else {
+    // ラベルは翻訳カタログで変える。テンプレートは一切上書きしていない。
+    check('「簡単な説明」を「商品について一言」に',
+        __('Short Description', 'dokan-lite') === '商品について一言',
+        __('Short Description', 'dokan-lite'));
+    check('「商品説明」を「商品の詳しい説明」に',
+        __('Description', 'dokan-lite') === '商品の詳しい説明',
+        __('Description', 'dokan-lite'));
+    check('「タグ」を「商品の特徴・キーワード」に',
+        __('Tags', 'dokan-lite') === '商品の特徴・キーワード',
+        __('Tags', 'dokan-lite'));
+    check('商品番号の重複エラーが日本語になる',
+        str_contains(__('Product SKU must be unique', 'dokan-lite'), '重複しない番号'),
+        __('Product SKU must be unique', 'dokan-lite'));
+
+    ob_start(); MK\Product\FormGuide::tagHelp(); $tagHelp = (string) ob_get_clean();
+    check('タグ欄に何を書くか説明がある', str_contains($tagHelp, '特徴やキーワード'));
+    check('タグ欄に記入例がある', str_contains($tagHelp, '例：'));
+
+    ob_start(); MK\Product\FormGuide::inventoryHelp(); $invHelp = (string) ob_get_clean();
+    check('在庫の2項目の違いを説明している', str_contains($invHelp, 'どちらか一方のみ'));
+
+    // ダウンロード商品・配送なしはフォームから消す。
+    check('ダウンロード商品・配送なしのテンプレートを出さない',
+        MK\Product\ListingForm::hideParts('/path/to/template.php', 'products/download-virtual') === false);
+    check('他のテンプレートには触らない',
+        MK\Product\ListingForm::hideParts('/path/to/template.php', 'products/inventory') === '/path/to/template.php');
+
+    $guideProduct = wp_insert_post([
+        'post_title'  => 'mk smoke フォーム案内',
+        'post_type'   => 'product',
+        'post_status' => 'draft',
+        'post_author' => $guideSeller,
+        'meta_input'  => [
+            '_regular_price'     => '3000',
+            '_price'             => '3000',
+            '_downloadable'      => 'yes',
+            '_virtual'           => 'yes',
+            '_manage_stock'      => 'yes',
+            '_sold_individually' => 'yes',
+        ],
+    ]);
+
+    if (is_wp_error($guideProduct)) {
+        check('create guide product', false, $guideProduct->get_error_message());
+    } else {
+        MK\Product\FormGuide::forcePhysical($guideProduct);
+
+        // 隠れているだけの項目は REST から立てられる。値ごと落とす。
+        check('ダウンロード商品を必ず無効にする',
+            get_post_meta($guideProduct, '_downloadable', true) === 'no',
+            (string) get_post_meta($guideProduct, '_downloadable', true));
+        check('配送なしを必ず無効にする',
+            get_post_meta($guideProduct, '_virtual', true) === 'no',
+            (string) get_post_meta($guideProduct, '_virtual', true));
+
+        // 在庫管理と「1点のみ」は同時に立たない。
+        check('在庫管理を選んだら「1点のみ」は外れる',
+            get_post_meta($guideProduct, '_sold_individually', true) === 'no',
+            (string) get_post_meta($guideProduct, '_sold_individually', true));
+        check('在庫管理はそのまま残る',
+            get_post_meta($guideProduct, '_manage_stock', true) === 'yes');
+
+        // 在庫管理を使わない一点物は「1点のみ」を保つ。
+        update_post_meta($guideProduct, '_manage_stock', 'no');
+        update_post_meta($guideProduct, '_sold_individually', 'yes');
+        MK\Product\FormGuide::forcePhysical($guideProduct);
+
+        check('一点物の設定は残す',
+            get_post_meta($guideProduct, '_sold_individually', true) === 'yes');
+
+        // 保存後にどこへ行ったかを必ず伝える。
+        wp_set_current_user($guideSeller);
+        $_GET['message']    = 'success';
+        $_GET['product_id'] = (string) $guideProduct;
+
+        foreach (['pending' => '審査待ち', 'publish' => '公開中', 'draft' => '下書き'] as $status => $word) {
+            wp_update_post(['ID' => $guideProduct, 'post_status' => $status]);
+
+            ob_start(); MK\Product\FormGuide::savedNotice(); $notice = (string) ob_get_clean();
+
+            check('保存後に「' . $word . '」だと伝える', str_contains($notice, $word), '');
+        }
+
+        // 公開中のときだけ、実際のページへのリンクを出す。
+        wp_update_post(['ID' => $guideProduct, 'post_status' => 'publish']);
+        ob_start(); MK\Product\FormGuide::savedNotice(); $liveNotice = (string) ob_get_clean();
+        check('公開中なら商品ページへのリンクを出す',
+            str_contains($liveNotice, '公開中の商品ページを見る'));
+
+        // 他人の商品の保存結果は出さない。
+        wp_set_current_user(0);
+        ob_start(); MK\Product\FormGuide::savedNotice(); $foreign = (string) ob_get_clean();
+        check('他人の保存結果は表示しない', $foreign === '');
+
+        unset($_GET['message'], $_GET['product_id']);
+
+        // プレビューから編集画面へ戻れる。出品者本人にだけ出す。
+        $GLOBALS['product'] = wc_get_product($guideProduct);
+
+        wp_set_current_user($guideSeller);
+        ob_start(); MK\Product\FormGuide::backToEdit(); $ownerBar = (string) ob_get_clean();
+
+        wp_set_current_user(0);
+        ob_start(); MK\Product\FormGuide::backToEdit(); $guestBar = (string) ob_get_clean();
+
+        unset($GLOBALS['product']);
+
+        check('出品者には「編集画面に戻る」を出す', str_contains($ownerBar, '編集画面に戻る'));
+        check('購入者には出さない', $guestBar === '');
+
+        wp_delete_post($guideProduct, true);
+        check('後始末：案内テスト用の商品を削除', !get_post($guideProduct));
+    }
+}
+
 echo "\n=== 価格未設定の出品は売り物にしない ===\n";
 
 // 客先で出た不具合そのもの：価格のない商品が公開され、購入ボタンは押せるのに
@@ -1994,11 +2117,19 @@ check('50円は売り物になる', MK\Product\PriceGate::isSellable(MK\Support\
 check('上限を超える価格は売り物にしない',
     !MK\Product\PriceGate::isSellable(MK\Support\Money::MAX_YEN + 1));
 
-$pricedId = wp_insert_post(['post_title' => 'mk smoke priced', 'post_type' => 'product',
-    'post_status' => 'draft', 'post_author' => $priceSeller]);
+// Saved the way Dokan saves: WC_Product::save(), which writes the post row
+// first and the price meta afterwards. A gate that reads the price too early
+// sees the value from BEFORE the save -- which is exactly what happened to the
+// client's ¥3,000 listing.
+$priced = new WC_Product_Simple();
+$priced->set_name('mk smoke priced');
+$priced->set_status('draft');
+$priced->set_regular_price('3000');
+$priced->save();
 
-update_post_meta($pricedId, '_regular_price', '3000');
-update_post_meta($pricedId, '_price', '3000');
+wp_update_post(['ID' => $priced->get_id(), 'post_author' => $priceSeller]);
+
+$pricedId = $priced->get_id();
 
 // wc_get_product() needs WooCommerce's data stores, which do not exist during
 // plugin bootstrap -- reading the price through it reported 0 for every
@@ -2006,26 +2137,53 @@ update_post_meta($pricedId, '_price', '3000');
 check('価格はメタから直接読む', MK\Product\PriceGate::priceOf($pricedId) === 3000,
     (string) MK\Product\PriceGate::priceOf($pricedId));
 
-wp_update_post(['ID' => $pricedId, 'post_status' => 'publish']);
+$priced->set_status('publish');
+$priced->save();
+
 check('価格のある商品は公開できる', get_post_status($pricedId) === 'publish',
     (string) get_post_status($pricedId));
 
-$freeId = wp_insert_post(['post_title' => 'mk smoke priceless', 'post_type' => 'product',
-    'post_status' => 'draft', 'post_author' => $priceSeller]);
+// The regression itself: price and status set in the SAME save, as the vendor
+// form does it. Read a moment too early and this publishes as a draft.
+$together = new WC_Product_Simple();
+$together->set_name('mk smoke priced in one save');
+$together->set_status('publish');
+$together->set_regular_price('4500');
+$together->save();
 
-wp_update_post(['ID' => $freeId, 'post_status' => 'publish']);
+wp_update_post(['ID' => $together->get_id(), 'post_author' => $priceSeller]);
+$together->set_status('publish');
+$together->save();
+
+check('価格と公開を同時に保存しても公開できる',
+    get_post_status($together->get_id()) === 'publish',
+    (string) get_post_status($together->get_id()));
+
+$free = new WC_Product_Simple();
+$free->set_name('mk smoke priceless');
+$free->set_status('draft');
+$free->save();
+
+wp_update_post(['ID' => $free->get_id(), 'post_author' => $priceSeller]);
+
+$freeId = $free->get_id();
+
+$free->set_status('publish');
+$free->save();
 
 check('価格のない商品は公開されない', get_post_status($freeId) === 'draft',
     (string) get_post_status($freeId));
 check('保留した理由が残る',
     get_post_meta($freeId, MK\Product\PriceGate::META_HELD, true) === 'yes');
 
-wp_update_post(['ID' => $freeId, 'post_status' => 'pending']);
-check('審査申請も止まる', get_post_status($freeId) === 'draft');
+$free->set_status('pending');
+$free->save();
+check('審査申請も止まる', get_post_status($freeId) === 'draft',
+    (string) get_post_status($freeId));
 
-update_post_meta($freeId, '_regular_price', '2000');
-update_post_meta($freeId, '_price', '2000');
-wp_update_post(['ID' => $freeId, 'post_status' => 'publish']);
+$free->set_regular_price('2000');
+$free->set_status('publish');
+$free->save();
 
 check('価格を入れれば公開できる', get_post_status($freeId) === 'publish',
     (string) get_post_status($freeId));
@@ -2033,14 +2191,23 @@ check('保留の印は消える', get_post_meta($freeId, MK\Product\PriceGate::M
 
 // Dokan の内部商品（Reverse Withdrawal Payment）は価格0が正常。これを下書きに
 // してしまい、実際に運営サイトで機能を壊した。
-$adminProduct = wp_insert_post(['post_title' => 'mk smoke platform', 'post_type' => 'product',
-    'post_status' => 'draft', 'post_author' => 1]);
+$admin = new WC_Product_Simple();
+$admin->set_name('mk smoke platform');
+$admin->set_status('draft');
+$admin->save();
+
+$adminProduct = $admin->get_id();
+wp_update_post(['ID' => $adminProduct, 'post_author' => 1]);
 
 check('運営自身の商品は対象外', !MK\Product\PriceGate::applies($adminProduct));
 
-wp_update_post(['ID' => $adminProduct, 'post_status' => 'publish']);
+$admin->set_status('publish');
+$admin->save();
+
 check('価格0でも運営の商品は公開できる', get_post_status($adminProduct) === 'publish',
     (string) get_post_status($adminProduct));
+
+wp_delete_post($together->get_id(), true);
 
 // 購入できない理由を必ず表示する。表示されないと「ボタンが効かない」に見える。
 $GLOBALS['product'] = wc_get_product($pricedId);

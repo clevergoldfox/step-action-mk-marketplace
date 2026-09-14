@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace MK\Product;
 
 use MK\Support\Money;
-use WP_Post;
 
 /**
  * A listing with no price may not go on sale.
@@ -21,15 +20,26 @@ use WP_Post;
  * buyer should not be the one who finds out.
  *
  * ---------------------------------------------------------------------------
- * Why this runs on save_post_product rather than wp_insert_post_data
+ * Which hook, and why it took two goes to get right
  * ---------------------------------------------------------------------------
  * PublishGate gates in wp_insert_post_data because whether its creator can be
- * paid is known before the row is written. The price is not: WooCommerce and
- * Dokan write _regular_price as post meta AFTER the post row, so at filter
- * time a brand-new product has no price yet and every single new listing would
- * be demoted. save_post_product runs once the meta is in place, and it is
- * still one point that the vendor form, the REST route, quick-edit and the
- * admin screen all pass through.
+ * paid is known before the post row is written. A price is not knowable that
+ * early: it is post meta, written after the row.
+ *
+ * save_post_product is not late enough either, and that is not obvious. Dokan
+ * saves through WC_Product::save(), which writes the post row -- firing
+ * save_post_product -- and only then hands the object to WooCommerce's data
+ * store, which writes _price and _regular_price. A gate on save_post_product
+ * therefore reads the price from BEFORE this save: empty for a new listing.
+ * The client duly listed an item with a price of ¥3,000, watched it go to
+ * draft, opened it, and found the price sitting there exactly as they had
+ * entered it.
+ *
+ * woocommerce_new_product and woocommerce_update_product fire at the end of
+ * that data store write, when the price on disk is the one just submitted.
+ * They are also the single point the vendor form, the REST route, quick-edit
+ * and the admin screen all pass through, which is what save_post_product was
+ * chosen for in the first place.
  */
 final class PriceGate
 {
@@ -41,7 +51,8 @@ final class PriceGate
 
     public static function register(): void
     {
-        add_action('save_post_product', [self::class, 'enforce'], 99, 3);
+        add_action('woocommerce_new_product', [self::class, 'enforce'], 99, 1);
+        add_action('woocommerce_update_product', [self::class, 'enforce'], 99, 1);
 
         add_action('dokan_dashboard_content_inside_before', [self::class, 'creatorNotice']);
         add_action('dokan_new_product_before_product_area', [self::class, 'creatorNotice']);
@@ -98,12 +109,8 @@ final class PriceGate
         return !function_exists('dokan_is_user_seller') || dokan_is_user_seller($author);
     }
 
-    /**
-     * @param int          $postId
-     * @param WP_Post|null $post
-     * @param bool         $update
-     */
-    public static function enforce($postId, $post = null, $update = false): void
+    /** @param int $postId */
+    public static function enforce($postId): void
     {
         if (self::$working || wp_is_post_autosave($postId) || wp_is_post_revision($postId)) {
             return;
@@ -174,18 +181,22 @@ final class PriceGate
         $items = [];
 
         foreach ($held as $productId) {
+            // Underlined and labelled as an action. Rendered as plain text
+            // these read as a list of names, and the client could not tell
+            // they were the way to fix the problem the notice describes.
             $items[] = sprintf(
-                '<li><a href="%s">%s</a></li>',
+                '<li><a class="mk-held__link" href="%s">%s<span class="mk-held__action">編集する</span></a></li>',
                 esc_url(dokan_edit_product_url((int) $productId)),
                 esc_html(get_the_title((int) $productId))
             );
         }
 
         printf(
-            '<div class="dokan-alert dokan-alert-warning">'
+            '<div class="dokan-alert dokan-alert-warning mk-held">'
             . '<strong>販売価格が未入力のため、公開できなかった商品があります。</strong><br>'
-            . '価格を入力して保存すると、通常どおり公開の手続きに進みます。'
-            . '<ul style="margin:8px 0 0 18px">%s</ul></div>',
+            . '下記の商品名を押すと編集画面が開きます。価格を入力して保存すると、'
+            . '通常どおり公開の手続きに進みます。'
+            . '<ul class="mk-held__list">%s</ul></div>',
             implode('', $items)
         );
     }
