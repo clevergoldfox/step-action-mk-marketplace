@@ -168,6 +168,14 @@ final class TransferService
      * rather than a voluntary refund. It is charged to the creator, per the
      * terms the client agreed.
      *
+     * $chargeToCreator says who ends up paying for the unwind, and it is the
+     * operator's finding of fact, not something this code can work out. The
+     * client's policy is that a refund caused by the seller -- not posted,
+     * condition or size described wrongly, a different item, a deliberate
+     * misdescription -- is at the seller's cost, and everything else is the
+     * platform's. Both cases are still written to the ledger; only one of them
+     * moves the seller's balance.
+     *
      * ---------------------------------------------------------------------
      * Order of operations
      * ---------------------------------------------------------------------
@@ -189,12 +197,13 @@ final class TransferService
         WC_Order $order,
         ?int $refundAmount = null,
         int $additionalCost = 0,
+        bool $chargeToCreator = true,
     ): void {
         $reversed = $this->pullBackTransfer($order);
 
         $refundId = (new PaymentService())->refund($order, $refundAmount);
 
-        $this->recordUnwind($order, $reversed, $refundId, $additionalCost);
+        $this->recordUnwind($order, $reversed, $refundId, $additionalCost, $chargeToCreator);
     }
 
     /**
@@ -284,6 +293,23 @@ final class TransferService
     }
 
     /**
+     * How much of the creator's share the platform is out by, after a reversal.
+     *
+     * Public and separate because it is the one line of this class that can be
+     * checked without moving money, and because it is the line that was wrong:
+     * a creator who was never paid owes nothing back, however little came back
+     * from a reversal that never happened.
+     */
+    public static function unrecoverableShare(WC_Order $order, int $reversedAmount): int
+    {
+        if ((string) $order->get_meta(self::META_TRANSFER_ID) === '') {
+            return 0;
+        }
+
+        return max(0, (int) $order->get_meta('_mk_creator_amount') - $reversedAmount);
+    }
+
+    /**
      * Write the unwind to the creator's ledger.
      *
      * The shortfall is everything the platform is out by and did not get back:
@@ -307,28 +333,12 @@ final class TransferService
      * cancellation run through the new 発送期限 flow (¥2,639 against a creator
      * who had received nothing).
      */
-    /**
-     * How much of the creator's share the platform is out by, after a reversal.
-     *
-     * Public and separate because it is the one line of this class that can be
-     * checked without moving money, and because it is the line that was wrong:
-     * a creator who was never paid owes nothing back, however little came back
-     * from a reversal that never happened.
-     */
-    public static function unrecoverableShare(WC_Order $order, int $reversedAmount): int
-    {
-        if ((string) $order->get_meta(self::META_TRANSFER_ID) === '') {
-            return 0;
-        }
-
-        return max(0, (int) $order->get_meta('_mk_creator_amount') - $reversedAmount);
-    }
-
     private function recordUnwind(
         WC_Order $order,
         int $reversedAmount,
         ?string $refundId,
         int $additionalCost,
+        bool $chargeToCreator = true,
     ): void {
         $creatorId = (int) $order->get_meta('_mk_creator_id');
 
@@ -349,7 +359,7 @@ final class TransferService
 
         $shortfall = $this->stripeFeeFor($order) + $additionalCost + $unrecovered;
 
-        if ($shortfall > 0) {
+        if ($shortfall > 0 && $chargeToCreator) {
             $this->ledger->record(
                 $creatorId,
                 $order->get_id(),
@@ -361,6 +371,26 @@ final class TransferService
                     ? 'チャージバック手数料・決済手数料・回収不能額'
                     : '決済手数料および回収不能額（返金時は返還されないため）'
             );
+
+            // The seller has to be told. A deduction that first appears as a
+            // smaller payout weeks later, or an invoice out of nowhere, is
+            // indistinguishable from the platform helping itself.
+            do_action('mk_creator_charged', $creatorId, $shortfall, $order->get_id());
+        } elseif ($shortfall > 0) {
+            // Written down even though nobody is billed for it. A cost the
+            // platform decided to absorb is still a cost, and the creator's
+            // history has to show that this refund happened and did NOT count
+            // against them -- otherwise the only record of the decision is in
+            // the operator's memory.
+            $this->ledger->record(
+                $creatorId,
+                $order->get_id(),
+                Recorder::PLATFORM_ABSORBED,
+                $shortfall,
+                0,
+                $refundId,
+                '返金に伴う費用（運営負担）'
+            );
         }
 
         // The refund's own id, on the order. The ledger carried it as a
@@ -370,19 +400,19 @@ final class TransferService
             $order->update_meta_data(self::META_REFUND_ID, $refundId);
         }
 
-        $order->add_order_note(
-            $paidOut
-                ? sprintf(
-                    '返金処理を実行しました。巻き戻し %s / 未回収額 %s をクリエイターの次回売上から控除します。',
-                    Money::format($reversedAmount),
-                    Money::format($shortfall)
-                )
-                : sprintf(
-                    '返金処理を実行しました。送金前のため巻き戻しはありません。'
-                    . '決済手数料など %s をクリエイターの次回売上から控除します。',
-                    Money::format($shortfall)
-                )
-        );
+        $reversal = $paidOut
+            ? sprintf('巻き戻し %s', Money::format($reversedAmount))
+            : '送金前のため巻き戻しはありません';
+
+        $order->add_order_note(sprintf(
+            '返金処理を実行しました。%s。%s',
+            $reversal,
+            $shortfall <= 0
+                ? '追加の費用は発生していません'
+                : ($chargeToCreator
+                    ? sprintf('費用 %s は出品者負担とし、次回売上から差し引きます', Money::format($shortfall))
+                    : sprintf('費用 %s は運営負担とし、出品者には請求しません', Money::format($shortfall)))
+        ));
         $order->save();
     }
 

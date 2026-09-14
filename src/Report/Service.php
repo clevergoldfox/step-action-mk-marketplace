@@ -53,7 +53,10 @@ final class Service
         return [
             'not_arrived'  => '商品が届かない',
             'not_shipped'  => '発送されない',
-            'not_as_described' => '説明と異なる',
+            'not_as_described' => '説明と明らかに異なる商品が届いた',
+            'size_mismatch'    => '掲載サイズと実物が明らかに異なる',
+            'condition_mismatch' => '掲載された商品の状態と実物に重大な相違がある',
+            'wrong_item'   => '掲載された商品と違うものが届いた',
             'damaged'      => '商品が破損していた',
             'nuisance'     => '迷惑行為',
             'other'        => 'その他',
@@ -63,6 +66,57 @@ final class Service
     public static function reasonLabel(string $reason): string
     {
         return self::reasons()[$reason] ?? $reason;
+    }
+
+    /**
+     * The grounds on which a buyer may ask for a refund.
+     *
+     * The client's policy, and the reason this list is separate from
+     * reasons(): a buyer changing their mind is NOT a ground. 「イメージと違った」
+     * 「サイズが合わなかった」「間違えて購入した」 are refused, and only a
+     * discrepancy between what was listed and what arrived can be filed.
+     *
+     * Encoding that as the list of choices rather than as a sentence in the
+     * terms is deliberate. A form that accepts a request and then refuses it
+     * wastes the buyer's time and the operator's; a form that offers only the
+     * grounds that exist says what the policy is at the moment it matters.
+     * 商品が届かない / 発送されない stay in because a missing parcel is not a
+     * change of mind -- it is the sale not happening at all.
+     *
+     * @return array<string, string>
+     */
+    public static function returnGrounds(): array
+    {
+        $reasons = self::reasons();
+
+        return array_intersect_key($reasons, array_flip([
+            'not_arrived',
+            'not_shipped',
+            'not_as_described',
+            'size_mismatch',
+            'condition_mismatch',
+            'wrong_item',
+            'damaged',
+        ]));
+    }
+
+    /**
+     * Whether this ground, on its face, is the seller's doing.
+     *
+     * Only the operator decides who pays -- this is what the refund screen
+     * offers them first, not what it does for them. A parcel damaged in
+     * transit is filed under the same ground as one packed badly, and only a
+     * person looking at the photographs can tell those apart.
+     */
+    public static function isSellerFault(string $reason): bool
+    {
+        return in_array($reason, [
+            'not_shipped',
+            'not_as_described',
+            'size_mismatch',
+            'condition_mismatch',
+            'wrong_item',
+        ], true);
     }
 
     // ------------------------------------------------------------------ open

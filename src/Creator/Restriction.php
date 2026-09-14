@@ -3,7 +3,10 @@ declare(strict_types=1);
 
 namespace MK\Creator;
 
+use MK\Ledger\Admin as LedgerAdmin;
+use MK\Ledger\Recorder;
 use MK\Order\DispatchDeadline;
+use MK\Support\Money;
 
 /**
  * 出品制限 — stopping a creator from listing anything new.
@@ -215,7 +218,8 @@ final class Restriction
 
         echo '<table class="wp-list-table widefat fixed striped"><thead><tr>'
             . '<th>出品者</th><th style="width:160px">ショップ名</th>'
-            . '<th style="width:110px">発送遅延</th><th style="width:120px">状態</th>'
+            . '<th style="width:110px">発送遅延</th><th style="width:120px">未回収額</th>'
+            . '<th style="width:120px">状態</th>'
             . '<th style="width:380px">操作</th></tr></thead><tbody>';
 
         $threshold = (int) get_option('mk_late_dispatch_threshold', 3);
@@ -240,6 +244,19 @@ final class Restriction
                 $late >= $threshold
                     ? sprintf('<strong style="color:#b32d2e">%d件</strong>', $late)
                     : sprintf('%d件', $late)
+            );
+
+            $owed = (new Recorder())->outstanding((int) $seller->ID);
+
+            printf(
+                '<td>%s</td>',
+                $owed > 0
+                    ? sprintf(
+                        '<a href="%s">%s</a>',
+                        esc_url(LedgerAdmin::url((int) $seller->ID)),
+                        esc_html(Money::format($owed))
+                    )
+                    : '—'
             );
             printf(
                 '<td>%s</td>',

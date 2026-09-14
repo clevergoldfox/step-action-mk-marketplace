@@ -22,9 +22,17 @@ use WC_Order;
  * a cancellation. Now that a missed dispatch deadline produces exactly such a
  * request, the flow the client described ends here, and it needs a button.
  *
- * Everything about the button is deliberately blunt: full amount, one action,
- * a confirmation, and a note on the order saying who did it. A partial refund
- * is a different conversation and belongs in a different control.
+ * Everything about the refund itself is deliberately blunt: full amount, a
+ * confirmation, and a note on the order saying who did it. A partial refund is
+ * a different conversation and belongs in a different control.
+ *
+ * The one thing the operator must decide is who pays for it. Per the client's
+ * policy a refund caused by the seller -- not posted, condition or size
+ * described wrongly, a different item, a deliberate misdescription -- is at
+ * the seller's cost, and anything else the platform carries. That is a finding
+ * of fact about photographs and messages, so it is two buttons rather than a
+ * rule: the ground the buyer filed under decides which one is offered first,
+ * and nothing more.
  */
 final class CancelAdmin
 {
@@ -86,12 +94,20 @@ final class CancelAdmin
             return;
         }
 
-        $total    = (int) $order->get_total();
-        $paidOut  = $order->get_meta(TransferService::META_TRANSFER_ID) !== '';
-        $reported = (new ReportService())->openCountFor(ReportService::TARGET_ORDER, $order->get_id());
+        $total   = (int) $order->get_total();
+        $paidOut = $order->get_meta(TransferService::META_TRANSFER_ID) !== '';
+        $service = new ReportService();
+        $open    = $service->openFor(ReportService::TARGET_ORDER, $order->get_id());
 
         if ($order->get_meta(DispatchDeadline::META_REQUESTED) !== '') {
             echo '<p><strong>購入者からキャンセル申請が出ています。</strong></p>';
+        }
+
+        foreach ($open as $report) {
+            printf(
+                '<p>申し出の理由：<strong>%s</strong></p>',
+                esc_html(ReportService::reasonLabel((string) $report->reason))
+            );
         }
 
         printf('<p>購入者へ <strong>%s</strong> を全額返金します。</p>', esc_html(Money::format($total)));
@@ -101,21 +117,50 @@ final class CancelAdmin
                 . '返金と同時に出品者から資金を引き戻します。出品者の残高が不足している場合は、'
                 . 'その分が未回収として記録されます。</p>';
         } else {
-            echo '<p>売上はまだ出品者へ送金されていないため、返金による損失は発生しません。</p>';
+            echo '<p>売上はまだ出品者へ送金されていないため、送金の引き戻しは発生しません。</p>';
         }
 
-        if ($reported > 0) {
-            echo '<p>この取引の未対応の通報も、あわせて解決済みにします。</p>';
+        if ($open !== []) {
+            echo '<p>この取引の未対応の申し出も、あわせて解決済みにします。</p>';
         }
+
+        // Which button is offered first is a recommendation, not a decision.
+        // The operator is the only one who has seen the photographs.
+        $sellerAtFault = false;
+
+        foreach ($open as $report) {
+            $sellerAtFault = $sellerAtFault || ReportService::isSellerFault((string) $report->reason);
+        }
+
+        echo '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
+            . '<strong>返金にかかる費用の負担</strong><br>'
+            . '返金しても Stripe の決済手数料は戻りません。'
+            . '出品者の責による返金であれば出品者負担とし、'
+            . '次回の売上から自動的に差し引きます。</p>';
 
         printf('<form method="post" action="%s">', esc_url(admin_url('admin-post.php')));
         wp_nonce_field(self::NONCE);
         echo '<input type="hidden" name="action" value="mk_cancel_order">';
         printf('<input type="hidden" name="order_id" value="%d">', $order->get_id());
         echo '<p><input type="text" name="reason" style="width:100%" placeholder="理由（注文メモに記録されます）"></p>';
-        echo '<button type="submit" class="button button-primary" style="width:100%" '
-            . 'onclick="return confirm(\'この取引をキャンセルし、購入者へ全額返金します。元に戻せません。よろしいですか？\');">'
-            . 'キャンセルして全額返金する</button>';
+
+        $confirm = '\'この取引をキャンセルし、購入者へ全額返金します。元に戻せません。よろしいですか？\'';
+
+        printf(
+            '<p><button type="submit" name="charge" value="creator" class="button %s" style="width:100%%" '
+            . 'onclick="return confirm(%s);">出品者の責として返金する%s</button></p>',
+            $sellerAtFault ? 'button-primary' : '',
+            $confirm,
+            $sellerAtFault ? '<br><small>（申し出の理由から、こちらが想定されます）</small>' : ''
+        );
+
+        printf(
+            '<p><button type="submit" name="charge" value="platform" class="button %s" style="width:100%%" '
+            . 'onclick="return confirm(%s);">運営負担として返金する</button></p>',
+            $sellerAtFault ? '' : 'button-primary',
+            $confirm
+        );
+
         echo '</form>';
     }
 
@@ -138,8 +183,14 @@ final class CancelAdmin
 
         $paidOut = $order->get_meta(TransferService::META_TRANSFER_ID) !== '';
 
+        // Default to the platform carrying it. If the form is ever posted
+        // without the choice, the wrong outcome is the platform absorbing a
+        // cost it need not have -- not a seller silently billed for one an
+        // operator never attributed to them.
+        $chargeToCreator = (($_POST['charge'] ?? '') === 'creator');
+
         try {
-            (new TransferService())->refundAndReverse($order);
+            (new TransferService())->refundAndReverse($order, null, 0, $chargeToCreator);
         } catch (\Throwable $e) {
             // Deliberately not swallowed into a note nobody reads: the money
             // did not move, and the operator must see that on the screen they
@@ -158,8 +209,9 @@ final class CancelAdmin
         $order = wc_get_order($orderId);   // reload: refundAndReverse saved it
 
         $order->add_order_note(sprintf(
-            '運営が取引をキャンセルし、全額を返金しました（操作者：%s）。%s',
+            '運営が取引をキャンセルし、全額を返金しました（操作者：%s／費用負担：%s）。%s',
             $admin->display_name,
+            $chargeToCreator ? '出品者' : '運営',
             $reason !== '' ? '理由：' . $reason : ''
         ));
         $order->save();
@@ -173,7 +225,11 @@ final class CancelAdmin
             $service->resolve(
                 (int) $report->id,
                 get_current_user_id(),
-                'キャンセル・返金対応済み' . ($reason !== '' ? '：' . $reason : ''),
+                sprintf(
+                    'キャンセル・返金対応済み（費用負担：%s）%s',
+                    $chargeToCreator ? '出品者' : '運営',
+                    $reason !== '' ? '：' . $reason : ''
+                ),
                 false
             );
         }

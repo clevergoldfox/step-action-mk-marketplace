@@ -1969,6 +1969,125 @@ echo "\n=== 出品制限（運営操作） ===\n";
 
 remove_filter('mk_should_notify', $muted, 99);
 
+echo "\n=== 返品・返金のルール ===\n";
+
+$grounds = MK\Report\Service::returnGrounds();
+
+// 購入者都合は申請の理由にならない。フォームに出さないことがルールの実装。
+foreach (['nuisance', 'other'] as $notAGround) {
+    check('返品理由に入らない：' . $notAGround, !isset($grounds[$notAGround]));
+}
+
+foreach (['not_as_described', 'size_mismatch', 'condition_mismatch', 'wrong_item'] as $ground) {
+    check('返品理由にある：' . MK\Report\Service::reasonLabel($ground), isset($grounds[$ground]));
+}
+
+check('届かない・発送されないも申請できる',
+    isset($grounds['not_arrived']) && isset($grounds['not_shipped']));
+
+check('サイズ相違は出品者の責を既定とする',
+    MK\Report\Service::isSellerFault('size_mismatch'));
+check('状態相違は出品者の責を既定とする',
+    MK\Report\Service::isSellerFault('condition_mismatch'));
+check('別商品が届いたは出品者の責を既定とする',
+    MK\Report\Service::isSellerFault('wrong_item'));
+// 配送中の破損と梱包不良は同じ理由で申請される。人が見なければ区別できない。
+check('破損は自動で出品者の責としない', !MK\Report\Service::isSellerFault('damaged'));
+
+$policyOrder = wc_create_order();
+
+if (is_wp_error($policyOrder)) {
+    check('create policy fixture', false, 'fixture setup failed');
+} else {
+    $policyBuyer = wp_insert_user(['user_login' => 'mk_smoke_pb_' . wp_rand(1000, 9999),
+        'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+    $policyOrder->set_customer_id((int) $policyBuyer);
+    $policyOrder->set_status(MK\Order\Statuses::PAID);
+    $policyOrder->save();
+
+    wp_set_current_user((int) $policyBuyer);
+    ob_start(); MK\Report\Frontend::render($policyOrder); $form = (string) ob_get_clean();
+    wp_set_current_user(0);
+
+    check('購入者都合では返金しないと明記している',
+        str_contains($form, 'ご都合による返品・返金はお受けしておりません'));
+    check('具体例まで書いてある', str_contains($form, '気が変わった'));
+    check('相違がある場合は申し出られると書いてある',
+        str_contains($form, '明らかな相違がある場合'));
+    check('自動返金ではなく運営が判断すると書いてある',
+        str_contains($form, '運営が内容を確認のうえ'));
+    check('購入者のフォームに迷惑行為は出さない', !str_contains($form, '>迷惑行為<'));
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($policyBuyer);
+    $policyOrder->delete(true);
+}
+
+echo "\n=== 返金費用の負担先 ===\n";
+
+// The ledger is the only record of who was charged, so it is what is checked.
+$costSeller = wp_insert_user(['user_login' => 'mk_smoke_cost_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($costSeller)) {
+    check('create cost fixture', false, 'fixture setup failed');
+} else {
+    $ledger = new MK\Ledger\Recorder();
+
+    check('初期の未回収額は0', $ledger->outstanding((int) $costSeller) === 0);
+
+    $debtId = $ledger->record((int) $costSeller, null, MK\Ledger\Recorder::DEBT_INCURRED, 500, 500, null, 'smoke');
+    check('出品者負担は残高に積まれる', $ledger->outstanding((int) $costSeller) === 500,
+        (string) $ledger->outstanding((int) $costSeller));
+
+    $absorbedId = $ledger->record((int) $costSeller, null, MK\Ledger\Recorder::PLATFORM_ABSORBED, 300, 0, null, 'smoke');
+    check('運営負担は残高を動かさない', $ledger->outstanding((int) $costSeller) === 500,
+        (string) $ledger->outstanding((int) $costSeller));
+    check('運営負担も履歴には残る',
+        count(array_filter($ledger->historyFor((int) $costSeller),
+            static fn ($r): bool => $r->entry_type === MK\Ledger\Recorder::PLATFORM_ABSORBED)) === 1);
+
+    // 請求書を送っただけでは回収ではない。ここを減らすと、売上からも引かれなくなる。
+    $invoiceId = $ledger->invoice((int) $costSeller, 500, 'smoke 請求');
+    check('請求を記録しても残高は減らない', $ledger->outstanding((int) $costSeller) === 500,
+        (string) $ledger->outstanding((int) $costSeller));
+
+    check('未回収のある出品者は一覧に出る',
+        in_array((int) $costSeller, array_map(
+            static fn ($r): int => (int) $r->user_id, $ledger->debtors()), true));
+
+    $paidId = $ledger->recordPayment((int) $costSeller, 200, 'smoke 入金');
+    check('入金を記録すると残高が減る', $ledger->outstanding((int) $costSeller) === 300,
+        (string) $ledger->outstanding((int) $costSeller));
+
+    $overId = $ledger->recordPayment((int) $costSeller, 99999, 'smoke 過入金');
+
+    check('完済の出品者は一覧から消える',
+        !in_array((int) $costSeller, array_map(
+            static fn ($r): int => (int) $r->user_id, $ledger->debtors()), true));
+    check('債務を超える入金でもマイナスにならない', $ledger->outstanding((int) $costSeller) === 0,
+        (string) $ledger->outstanding((int) $costSeller));
+
+
+    global $wpdb;
+
+    foreach ([$debtId, $absorbedId, $invoiceId, $paidId, $overId] as $rowId) {
+        $wpdb->delete($wpdb->prefix . 'mk_creator_ledger', ['id' => $rowId], ['%d']);
+    }
+
+    $wpdb->delete($wpdb->prefix . 'mk_creator_balances', ['user_id' => (int) $costSeller], ['%d']);
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($costSeller);
+
+    check('後始末：台帳のテスト行を削除',
+        (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}mk_creator_ledger WHERE user_id = %d",
+            (int) $costSeller
+        )) === 0);
+}
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');

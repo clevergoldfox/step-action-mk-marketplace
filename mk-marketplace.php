@@ -122,6 +122,7 @@ add_action('plugins_loaded', static function (): void {
     Creator\ShopName::register();
     Creator\Search::register();
     Creator\Restriction::register();
+    Ledger\Admin::register();
     Checkout\Controller::register();
     Account\Registration::register();
     Account\Terms::register();

@@ -28,8 +28,21 @@ final class Recorder
     /** A cost the platform absorbed that the creator now owes. */
     public const DEBT_INCURRED = 'debt_incurred';
 
-    /** Part of that debt deducted from a later payout. */
+    /** Part of that debt deducted from a later payout, or paid off-platform. */
     public const DEBT_RECOVERED = 'debt_recovered';
+
+    /**
+     * A cost of an unwind that the platform chose to carry itself.
+     *
+     * Not a debt: it never touches the balance. It is here so that a creator's
+     * history shows the refund happened and was NOT charged to them, which is
+     * the question that comes up when they compare two refunds and only one of
+     * them cost them anything.
+     */
+    public const PLATFORM_ABSORBED = 'platform_absorbed';
+
+    /** An outstanding amount billed to the creator outside the platform. */
+    public const INVOICED = 'invoiced';
 
     /**
      * Write one entry and update the running balance atomically.
@@ -129,6 +142,70 @@ final class Recorder
         );
 
         return $this->outstanding($userId);
+    }
+
+    /**
+     * Record that the creator has been billed for what they owe.
+     *
+     * Deliberately does NOT reduce the balance. Sending an invoice collects
+     * nothing; treating it as recovery would clear the debt from the payout
+     * path and the money would never be taken from anywhere. This is a note in
+     * the history so the operator can see a bill went out, and when.
+     */
+    public function invoice(int $userId, int $amount, string $note = ''): int
+    {
+        return $this->record(
+            $userId,
+            null,
+            self::INVOICED,
+            $amount,
+            0,
+            null,
+            $note !== '' ? $note : '未回収額を出品者へ別途請求'
+        );
+    }
+
+    /**
+     * Money the creator actually paid back, outside the platform.
+     *
+     * The other half of invoice(). Clamped to what is owed: recording a
+     * payment larger than the debt would otherwise leave a negative balance
+     * that the payout path would read as credit.
+     */
+    public function recordPayment(int $userId, int $amount, string $note = ''): int
+    {
+        $amount = min(max(0, $amount), $this->outstanding($userId));
+
+        return $this->record(
+            $userId,
+            null,
+            self::DEBT_RECOVERED,
+            $amount,
+            -$amount,
+            null,
+            $note !== '' ? $note : '出品者からの入金により回収'
+        );
+    }
+
+    /**
+     * Everyone who currently owes the platform money.
+     *
+     * @return array<int, object> {user_id, outstanding, updated_at}, largest first
+     */
+    public function debtors(int $limit = 100): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT user_id, outstanding, updated_at
+                   FROM {$wpdb->prefix}mk_creator_balances
+                  WHERE outstanding > 0
+               ORDER BY outstanding DESC
+                  LIMIT %d",
+                $limit
+            )
+        ) ?: [];
     }
 
     /**

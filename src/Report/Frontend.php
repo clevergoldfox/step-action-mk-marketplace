@@ -6,14 +6,21 @@ namespace MK\Report;
 use WC_Order;
 
 /**
- * The 通報 form on a transaction.
+ * The 通報 / 返品・返金申請 form on a transaction.
  *
- * Shown to both sides of an order. A buyer reports an item that never
- * arrived or was not as described; a creator reports a buyer who is abusive
- * or who confirmed receipt and then demanded money back off-platform.
+ * Shown to both sides of an order, but it is not the same form for both. A
+ * buyer is asking for their money back and may only do so on the grounds the
+ * client's policy recognises; a seller is reporting a buyer who is abusive or
+ * who confirmed receipt and then demanded money back off-platform.
+ *
+ * The buyer's half opens by saying what the policy is: 購入者都合の返品・返金
+ * は原則不可, and only a genuine discrepancy between the listing and the item
+ * can be claimed. Stating that before the form, and offering only the grounds
+ * that exist, is the difference between a policy people can act on and one
+ * they discover after waiting a week for a refusal.
  *
  * Placed on the order screen rather than behind a support link because the
- * report has to be attached to a specific transaction to do anything useful:
+ * claim has to be attached to a specific transaction to do anything useful:
  * it is the order id that stops the payout.
  */
 final class Frontend
@@ -59,10 +66,31 @@ final class Frontend
             self::NONCE
         );
 
+        $isBuyer = $userId === $order->get_customer_id();
+
         echo '<section class="mk-report"><h2>この取引に問題がありますか？</h2>';
-        echo '<p>商品が届かない、説明と異なるなどの問題がございましたら、'
-            . '下記より運営へご連絡ください。<strong>通報を行うと、'
-            . '運営が確認するまで出品者への送金は保留されます。</strong></p>';
+
+        if ($isBuyer) {
+            // The policy, before the form rather than after the request. A
+            // buyer who reads this and closes the page has been served better
+            // than one who fills in a form that was never going to succeed.
+            echo '<div class="mk-report__policy">'
+                . '<p><strong>お客様のご都合による返品・返金はお受けしておりません。</strong><br>'
+                . '「イメージと違った」「サイズが合わなかった」「思っていた状態と違った」'
+                . '「間違えて購入した」「気が変わった」といった理由では、'
+                . 'キャンセル・ご返金はいたしかねます。'
+                . '一点物の中古品を個人間でお取引いただく性質上、何卒ご了承ください。</p>'
+                . '<p>ただし、<strong>出品内容と実際の商品に明らかな相違がある場合</strong>は、'
+                . '下記より運営へお申し出ください。運営が内容を確認のうえ、'
+                . '返品・ご返金の可否を判断いたします。</p>'
+                . '</div>';
+
+            echo '<p>お申し出をいただくと、<strong>運営が確認を終えるまで出品者への送金は保留されます。</strong>'
+                . 'お手元に商品がある場合は、状態がわかるお写真を撮ってお待ちください。</p>';
+        } else {
+            echo '<p>購入者との間で問題がございましたら、下記より運営へご連絡ください。'
+                . '<strong>ご連絡いただくと、運営が確認するまでこの取引の送金は保留されます。</strong></p>';
+        }
 
         printf('<form method="post" action="%s">', esc_url($action));
 
@@ -70,7 +98,16 @@ final class Frontend
         echo '<select name="mk_report_reason" id="mk_report_reason" required>';
         echo '<option value="">選択してください</option>';
 
-        foreach (Service::reasons() as $key => $label) {
+        // The buyer is offered the grounds that exist; the seller is not
+        // offered them at all, because a seller cannot ask for their own
+        // buyer's money back.
+        $choices = self::choicesFor($order, $userId);
+
+        if ($isBuyer) {
+            $choices['other'] = 'その他（運営に相談したいこと）';
+        }
+
+        foreach ($choices as $key => $label) {
             printf('<option value="%s">%s</option>', esc_attr($key), esc_html($label));
         }
 
@@ -80,10 +117,31 @@ final class Frontend
             . '<textarea name="mk_report_comment" id="mk_report_comment" rows="4" '
             . 'style="width:100%" maxlength="2000"></textarea></p>';
 
-        echo '<button type="submit" class="button" '
-            . 'onclick="return confirm(\'運営へ通報します。よろしいですか？\');">'
-            . '通報する</button>';
+        echo $isBuyer
+            ? '<button type="submit" class="button" '
+                . 'onclick="return confirm(\'運営へ申し出ます。よろしいですか？\');">'
+                . '運営に申し出る</button>'
+            : '<button type="submit" class="button" '
+                . 'onclick="return confirm(\'運営へ通報します。よろしいですか？\');">'
+                . '通報する</button>';
+
         echo '</form></section>';
+    }
+
+    /**
+     * The reasons this party may file, server-side.
+     *
+     * The select offers the right list, but a select is not a rule. Without
+     * this a seller could post a buyer's ground and appear in the operator's
+     * queue as a refund claim against themselves.
+     *
+     * @return array<string, string>
+     */
+    private static function choicesFor(WC_Order $order, int $userId): array
+    {
+        return $userId === $order->get_customer_id()
+            ? Service::returnGrounds() + ['other' => 'その他']
+            : ['nuisance' => Service::reasonLabel('nuisance'), 'other' => Service::reasonLabel('other')];
     }
 
     public static function handleSubmit(): void
@@ -118,6 +176,11 @@ final class Frontend
         $reason = isset($_POST['mk_report_reason'])
             ? sanitize_key(wp_unslash($_POST['mk_report_reason']))
             : '';
+
+        if (!isset(self::choicesFor($order, $userId)[$reason])) {
+            wp_safe_redirect(add_query_arg('mk_report_error', '1', $order->get_view_order_url()));
+            exit;
+        }
 
         $comment = isset($_POST['mk_report_comment'])
             ? sanitize_textarea_field(wp_unslash($_POST['mk_report_comment']))

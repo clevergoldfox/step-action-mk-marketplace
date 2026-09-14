@@ -31,6 +31,7 @@ final class Events
         add_action('mk_report_opened', [self::class, 'onReport'], 10, 3);
         add_action('mk_dispatch_overdue', [self::class, 'onDispatchOverdue'], 10, 2);
         add_action('mk_creator_repeatedly_late', [self::class, 'onRepeatedlyLate'], 10, 2);
+        add_action('mk_creator_charged', [self::class, 'onCreatorCharged'], 10, 3);
         add_action('mk_transfer_sent', [self::class, 'onTransferSent'], 10, 3);
         add_action('transition_post_status', [self::class, 'onListingStatus'], 10, 3);
     }
@@ -253,6 +254,38 @@ final class Events
             ),
             short: sprintf('注文 #%d が発送期限を過ぎています。キャンセル申請が可能です。', $orderId),
             url: $order->get_view_order_url(),
+            context: ['order_id' => $orderId],
+        ));
+    }
+
+    /**
+     * The seller has been charged for a refund they caused.
+     *
+     * Sent at the moment the charge is recorded, not when it is deducted. The
+     * deduction can be weeks away, and a payout that arrives smaller than
+     * expected with no prior explanation is the single fastest way to lose a
+     * seller's trust -- including the honest ones, who will assume the
+     * platform is skimming.
+     */
+    public static function onCreatorCharged(int $creatorId, int $amount, int $orderId): void
+    {
+        Dispatcher::send(new Notification(
+            type: 'creator.charged',
+            userId: $creatorId,
+            subject: '返金に伴う費用のご負担について',
+            body: sprintf(
+                "ご注文 #%d について、購入者へ返金を行いました。\n\n"
+                . "この返金は出品内容と実際の商品との相違によるものと判断したため、"
+                . "返金に伴う費用 %s を出品者様のご負担とさせていただきます。\n\n"
+                . "この金額は次回以降の売上から自動的に差し引かれます。"
+                . "売上から差し引けない場合は、別途ご請求させていただくことがあります。\n\n"
+                . "内訳は出品者ダッシュボードの「売上・受取設定」からご確認いただけます。"
+                . "ご不明な点やご異議がございましたら、運営までご連絡ください。",
+                $orderId,
+                Money::format($amount)
+            ),
+            short: sprintf('注文 #%d の返金費用 %s をご負担いただきます。', $orderId, Money::format($amount)),
+            url: dokan_get_navigation_url(\MK\Creator\Onboarding::PAGE),
             context: ['order_id' => $orderId],
         ));
     }
