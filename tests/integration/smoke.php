@@ -1492,8 +1492,10 @@ $brandHtml = (string) ob_get_clean();
 check('brand field not rendered', !str_contains($brandHtml, 'product_brand'), trim(substr($brandHtml, 0, 60)));
 
 // The filter must hide only what it names; a neighbouring part still renders.
+// Not products/downloadable any more -- that is now hidden too, and a control
+// that quietly becomes part of the thing it controls for proves nothing.
 ob_start();
-dokan_get_template_part('products/downloadable', '', ['post_id' => 0, 'class' => '']);
+dokan_get_template_part('products/inventory', '', ['post_id' => 0, 'class' => '']);
 check('other form parts still render', trim((string) ob_get_clean()) !== '');
 
 $sel = get_option('dokan_selling', []);
@@ -1977,6 +1979,173 @@ echo "\n=== 出品制限（運営操作） ===\n";
 
 remove_filter('mk_should_notify', $muted, 99);
 
+echo "\n=== 在庫のある商品（1点のみ / 複数） ===\n";
+
+$stockSeller = get_user_by('login', 'mk_test_creator');
+$stockSeller = $stockSeller ? (int) $stockSeller->ID : 0;
+
+$stocked = new WC_Product_Simple();
+$stocked->set_name('mk smoke 在庫3点');
+$stocked->set_status('publish');
+$stocked->set_regular_price('1000');
+$stocked->set_manage_stock(true);
+$stocked->set_stock_quantity(3);
+$stocked->save();
+
+$stockedId = $stocked->get_id();
+wp_update_post(['ID' => $stockedId, 'post_author' => $stockSeller]);
+
+$reservation = new MK\Product\Reservation();
+
+check('在庫管理の商品だと分かる', MK\Product\Reservation::tracksStock($stockedId));
+check('在庫数を読める', MK\Product\Reservation::stockOf($stockedId) === 3,
+    (string) MK\Product\Reservation::stockOf($stockedId));
+
+check('1人目は買える', $reservation->lock($stockedId, 9001));
+check('1点減る', MK\Product\Reservation::stockOf($stockedId) === 2,
+    (string) MK\Product\Reservation::stockOf($stockedId));
+check('まだ売り切れにならない', get_post_status($stockedId) === 'publish',
+    (string) get_post_status($stockedId));
+
+$reservation->lock($stockedId, 9002);
+$reservation->lock($stockedId, 9003);
+
+check('在庫が0になる', MK\Product\Reservation::stockOf($stockedId) === 0,
+    (string) MK\Product\Reservation::stockOf($stockedId));
+check('0になったら自動的に売り切れ',
+    get_post_status($stockedId) === MK\Product\Statuses::SOLD,
+    (string) get_post_status($stockedId));
+
+// 在庫が尽きたあとに買えてしまうと、出品者は持っていない物を売ることになる。
+check('在庫切れ後は買えない', !$reservation->lock($stockedId, 9004));
+check('マイナスにならない', MK\Product\Reservation::stockOf($stockedId) === 0,
+    (string) MK\Product\Reservation::stockOf($stockedId));
+
+$reservation->release($stockedId);
+
+check('手続きをやめた分は在庫に戻る', MK\Product\Reservation::stockOf($stockedId) === 1,
+    (string) MK\Product\Reservation::stockOf($stockedId));
+check('在庫が戻れば再び購入できる状態になる', get_post_status($stockedId) === 'publish',
+    (string) get_post_status($stockedId));
+
+// 決済確定は在庫を動かさない。確保した時点ですでに1点引いている。
+$beforeSold = MK\Product\Reservation::stockOf($stockedId);
+$reservation->markSold($stockedId);
+check('決済確定で二重に減らさない',
+    MK\Product\Reservation::stockOf($stockedId) === $beforeSold,
+    (string) MK\Product\Reservation::stockOf($stockedId));
+
+// 一点物の動きは変えていない。ここが壊れると二重販売が起きる。
+$oneOff = new WC_Product_Simple();
+$oneOff->set_name('mk smoke 一点物');
+$oneOff->set_status('publish');
+$oneOff->set_regular_price('1000');
+$oneOff->save();
+
+$oneOffId = $oneOff->get_id();
+wp_update_post(['ID' => $oneOffId, 'post_author' => $stockSeller]);
+
+check('一点物：先に押した人が確保する', $reservation->lock($oneOffId, 9101));
+check('一点物：2人目は確保できない', !$reservation->lock($oneOffId, 9102));
+check('一点物：手続き中は他の人から購入できない',
+    get_post_status($oneOffId) === MK\Product\Statuses::RESERVED,
+    (string) get_post_status($oneOffId));
+
+$reservation->markSold($oneOffId);
+check('一点物：決済確定で売り切れ',
+    get_post_status($oneOffId) === MK\Product\Statuses::SOLD,
+    (string) get_post_status($oneOffId));
+
+wp_delete_post($stockedId, true);
+wp_delete_post($oneOffId, true);
+
+check('後始末：在庫テスト用の商品を削除', !get_post($stockedId) && !get_post($oneOffId));
+
+echo "\n=== タグの保存 ===\n";
+
+// Dokan は投稿された値を absint() で整数に変換してから付けるので、入力した
+// 文字は 0 になって消える。クライアントが「保存されない」と報告した現象。
+check('出品者がタグを作れる設定になっている',
+    dokan_get_option('product_vendors_can_create_tags', 'dokan_selling') === 'on',
+    (string) dokan_get_option('product_vendors_can_create_tags', 'dokan_selling', '(未設定)'));
+
+// その設定はブラウザにも渡らないと、入力そのものが拒否される。
+$localized = apply_filters('dokan_localized_args', []);
+check('その設定がブラウザにも渡る',
+    ($localized['product_vendors_can_create_tags'] ?? '') === 'on',
+    (string) ($localized['product_vendors_can_create_tags'] ?? '(未設定)'));
+
+$tagProduct = new WC_Product_Simple();
+$tagProduct->set_name('mk smoke タグ');
+$tagProduct->set_status('draft');
+$tagProduct->set_regular_price('1000');
+$tagProduct->save();
+
+$tagProductId = $tagProduct->get_id();
+
+$_POST['dokan_update_product'] = 'Save Product';
+$_POST['product_tag'] = ['オーバーサイズ', '古着'];
+
+MK\Product\Tags::saveTyped($tagProductId);
+
+$saved = wp_get_post_terms($tagProductId, 'product_tag', ['fields' => 'names']);
+sort($saved);
+
+check('入力した文字がタグとして保存される', $saved === ['オーバーサイズ', '古着'],
+    implode(',', $saved));
+
+// 既存タグは ID で送られてくる。混在しても両方付く。
+$existing = get_term_by('name', '古着', 'product_tag');
+$_POST['product_tag'] = [(string) $existing->term_id, 'ストリート'];
+
+MK\Product\Tags::saveTyped($tagProductId);
+
+$saved = wp_get_post_terms($tagProductId, 'product_tag', ['fields' => 'names']);
+sort($saved);
+
+check('選んだタグと入力したタグが混ざっても保存される', $saved === ['ストリート', '古着'],
+    implode(',', $saved));
+
+// 空で送れば全部外れる。外せないタグは付けられないのと同じくらい困る。
+$_POST['product_tag'] = [''];
+MK\Product\Tags::saveTyped($tagProductId);
+check('タグを外せる', wp_get_post_terms($tagProductId, 'product_tag', ['fields' => 'names']) === []);
+
+// 出品フォーム以外の保存でタグを書き換えない。
+$_POST['product_tag'] = ['勝手に付けたタグ'];
+unset($_POST['dokan_update_product']);
+MK\Product\Tags::saveTyped($tagProductId);
+check('出品フォーム以外からは書き換えない',
+    wp_get_post_terms($tagProductId, 'product_tag', ['fields' => 'names']) === []);
+
+unset($_POST['product_tag']);
+
+foreach (['オーバーサイズ', '古着', 'ストリート', '勝手に付けたタグ'] as $name) {
+    $term = get_term_by('name', $name, 'product_tag');
+
+    if ($term) {
+        wp_delete_term($term->term_id, 'product_tag');
+    }
+}
+
+wp_delete_post($tagProductId, true);
+
+check('後始末：タグテスト用の商品と用語を削除',
+    !get_post($tagProductId)
+        && (int) wp_count_terms(['taxonomy' => 'product_tag', 'hide_empty' => false]) === 0);
+
+echo "\n=== 保存と出品の2つのボタン ===\n";
+
+ob_start(); MK\Product\FormGuide::submitButtons(0); $buttons = (string) ob_get_clean();
+
+check('「商品を保存」がある', str_contains($buttons, '商品を保存'));
+check('「出品する」がある', str_contains($buttons, '出品する'));
+check('保存は下書きにする', str_contains($buttons, 'data-mk-status="draft"'));
+check('出品するは審査へ回す',
+    str_contains($buttons, 'data-mk-status="pending"')
+        || str_contains($buttons, 'data-mk-status="publish"'));
+check('押す前は状態を指定しない', str_contains($buttons, 'id="mk_post_status" value=""'));
+
 echo "\n=== 出品フォームの案内 ===\n";
 
 $guideSeller = get_user_by('login', 'mk_test_creator');
@@ -2004,7 +2173,12 @@ if ($guideSeller === 0) {
     check('タグ欄に記入例がある', str_contains($tagHelp, '例：'));
 
     ob_start(); MK\Product\FormGuide::inventoryHelp(); $invHelp = (string) ob_get_clean();
-    check('在庫の2項目の違いを説明している', str_contains($invHelp, 'どちらか一方のみ'));
+    check('在庫は2択で選ばせる',
+        str_contains($invHelp, 'value="single"') && str_contains($invHelp, 'value="stock"'));
+    check('一点物は在庫数が要らないと書いてある',
+        str_contains($invHelp, '在庫数の入力は必要ありません'));
+    check('複数在庫の動きを説明している',
+        str_contains($invHelp, '0になると自動的に「売り切れ」'));
 
     // ダウンロード商品・配送なしはフォームから消す。
     check('ダウンロード商品・配送なしのテンプレートを出さない',

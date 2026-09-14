@@ -43,6 +43,19 @@ final class ListingForm
          * call can set.
          */
         'products/download-virtual',
+
+        /*
+         * products/downloadable -- the ダウンロードの設定 panel: file list,
+         * download limit, expiry.
+         *
+         * The other half of the same feature, and shown even though its
+         * checkbox is gone, which left a seller with a panel for attaching
+         * files to a second-hand jacket. It stays hidden until the platform
+         * actually sells digital content, at which point this is where that
+         * work will start rather than a stray WooCommerce panel nobody
+         * explained.
+         */
+        'products/downloadable',
     ];
 
     public static function register(): void

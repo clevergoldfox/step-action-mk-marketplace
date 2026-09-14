@@ -140,8 +140,19 @@ final class Transitions
 
         $productId = (int) $order->get_meta('_mk_product_id');
 
-        if ($productId > 0) {
+        // A unit is given back once. The sweeper returns the unit itself and
+        // then cancels the order, which lands here -- without this check the
+        // same unit would be credited twice and the seller would end up with
+        // more stock than they ever had.
+        $holdsUnit = $order->get_meta(Reservation::META_HOLDS_UNIT) === 'yes';
+        $tracked   = $productId > 0 && Reservation::tracksStock($productId);
+
+        if ($productId > 0 && (!$tracked || $holdsUnit)) {
             (new Reservation())->release($productId);
+
+            if ($tracked) {
+                $order->update_meta_data(Reservation::META_HOLDS_UNIT, 'no');
+            }
         }
 
         $order->add_order_note('取引がキャンセルされました。送金予定を取り消し、商品を再出品しました。');

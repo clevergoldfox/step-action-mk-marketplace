@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 12;
+    public const SCHEMA_VERSION = 13;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -187,6 +187,7 @@ final class Migrator
         self::rebuildCreatorBalances($from);
         self::recordListingModeration();
         self::useFullListingForm();
+        self::allowVendorTags();
         self::useLegacyProductEditor();
         self::nameExistingShops();
         self::withdrawPricelessListings();
@@ -298,6 +299,37 @@ final class Migrator
 
         if (!isset($selling['product_status'])) {
             $selling['product_status'] = 'pending';
+            update_option('dokan_selling', $selling);
+        }
+    }
+
+    /**
+     * Let creators write their own tags.
+     *
+     * Dokan's product_vendors_can_create_tags is off by default, which puts
+     * the tag field into "pick from the existing list" mode -- and on a new
+     * marketplace that list is empty. The field accepted typing and saved
+     * nothing, every time, for every seller: the client reported it as tags
+     * not being saved, and it never could have saved one.
+     *
+     * Off is the right default for a store whose owner curates a fixed
+     * vocabulary. Here the tags ARE the vocabulary, and there is nobody to
+     * seed it but the creators.
+     *
+     * Set only when unset, like the settings above: an operator who turns it
+     * back off has made a decision, and this must not undo it on the next
+     * upgrade.
+     */
+    private static function allowVendorTags(): void
+    {
+        $selling = get_option('dokan_selling', []);
+
+        if (!is_array($selling)) {
+            $selling = [];
+        }
+
+        if (!isset($selling['product_vendors_can_create_tags'])) {
+            $selling['product_vendors_can_create_tags'] = 'on';
             update_option('dokan_selling', $selling);
         }
     }

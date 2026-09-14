@@ -40,7 +40,13 @@ final class FormGuide
 
         add_action('dokan_product_edit_after_product_tags', [self::class, 'tagHelp'], 10, 0);
         add_action('dokan_product_edit_after_inventory', [self::class, 'inventoryHelp'], 10, 0);
+
+        // Late, so it lands after the option panel and the condition fields
+        // and immediately before Dokan's own submit button.
+        add_action('dokan_product_edit_after_options', [self::class, 'submitButtons'], 90, 1);
         add_action('dokan_product_content_inside_area_before', [self::class, 'savedNotice']);
+
+        add_filter('body_class', [self::class, 'bodyClass']);
 
         add_action('wp_print_footer_scripts', [self::class, 'script'], 20);
 
@@ -110,24 +116,134 @@ final class FormGuide
         echo '<p class="mk-field-help">'
             . 'この商品に当てはまる<strong>特徴やキーワード</strong>を入力してください。'
             . '購入者が探すときの手がかりになります。<br>'
-            . '<span class="mk-field-help__eg">例：ハンドメイド／ヴィンテージ／一点物／ワンピース／レザー／ギフト向け</span>'
+            . '<span class="mk-field-help__eg">例：オーバーサイズ／古着／ストリート／Tシャツ／ユニセックス／一点物</span>'
             . '</p>';
     }
 
     /**
-     * ② and ①: the two inventory choices, and what the item number is.
+     * ⑤ One question instead of two settings.
      *
-     * The exclusivity itself is applied in the browser, where the seller can
-     * see it happen; this explains why.
+     * 「在庫管理を有効にする」 and 「1回の注文で1点のみ購入可能にする」 are two
+     * checkboxes that a seller has to combine correctly, and combining them
+     * wrongly produces a listing that behaves in a way they did not intend.
+     * There are only two answers worth having, so they are offered as two
+     * answers: this is one of a kind, or I have several.
+     *
+     * The radio is what the seller sees; Dokan's own checkboxes are still what
+     * is submitted, driven from it by the script and hidden by the stylesheet.
+     * Nothing about Dokan's save path is bypassed, so a future Dokan change
+     * cannot leave us writing fields it has stopped reading.
      */
     public static function inventoryHelp(): void
     {
-        echo '<p class="mk-field-help">'
-            . '<strong>「在庫管理を有効にする」</strong>は、同じ商品を複数お持ちの場合に'
-            . '在庫数で管理する設定です。<br>'
-            . '<strong>「1回の注文で1点のみ購入可能にする」</strong>は、一点物の商品向けの設定です。<br>'
-            . 'どちらか一方のみお選びいただけます。一点物の場合は後者をお選びください。'
-            . '</p>';
+        $tracks = self::editingStocked();
+
+        echo '<div class="mk-stock-choice">';
+        echo '<p class="mk-stock-choice__title">この商品の在庫について</p>';
+
+        printf(
+            '<label class="mk-stock-choice__option"><input type="radio" name="mk_stock_mode" value="single"%s>'
+            . '<span><strong>1点のみの商品</strong>'
+            . '<small>手持ちが1点だけの商品です。購入されると自動的に「売り切れ」になります。'
+            . '在庫数の入力は必要ありません。</small></span></label>',
+            $tracks ? '' : ' checked'
+        );
+
+        printf(
+            '<label class="mk-stock-choice__option"><input type="radio" name="mk_stock_mode" value="stock"%s>'
+            . '<span><strong>在庫が複数ある商品</strong>'
+            . '<small>同じ商品を複数お持ちの場合です。購入されるたびに在庫数が1つ減り、'
+            . '0になると自動的に「売り切れ」になります。下の「在庫数」にお持ちの数をご入力ください。</small></span></label>',
+            $tracks ? ' checked' : ''
+        );
+
+        echo '</div>';
+    }
+
+    /** Whether the listing being edited is one with a quantity. */
+    private static function editingStocked(): bool
+    {
+        $productId = isset($_GET['product_id']) ? (int) $_GET['product_id'] : 0;
+
+        return $productId > 0 && Reservation::tracksStock($productId);
+    }
+
+    /**
+     * The stock mode, decided while the page is built.
+     *
+     * The quantity fields used to be hidden by a class the script added after
+     * load: the seller saw them flash on every page load, and saw them for
+     * good if any script above ours threw. What mode a listing is in is known
+     * here, so it is settled here, and the script only has to keep up when the
+     * seller changes their mind.
+     *
+     * @param array<int,string> $classes
+     * @return array<int,string>
+     */
+    public static function bodyClass(array $classes): array
+    {
+        if (!function_exists('dokan_is_seller_dashboard') || !dokan_is_seller_dashboard()) {
+            return $classes;
+        }
+
+        $classes[] = self::editingStocked() ? 'mk-stock-mode-stock' : 'mk-stock-mode-single';
+
+        return $classes;
+    }
+
+    /**
+     * ⑥ Two buttons, because there are two things a seller might mean.
+     *
+     * Dokan offers one, labelled 「商品を保存」, which re-saves at whatever
+     * status the listing already has. A seller filling in a new listing cannot
+     * tell from that whether pressing it puts the item on sale or merely keeps
+     * their work, and the difference matters enormously to them.
+     *
+     * So: one button that only keeps the work, and one that actually submits
+     * it. Both are ordinary submits of Dokan's own form carrying Dokan's own
+     * field name -- the only thing added is the post_status Dokan already
+     * reads, set by the button that was pressed. With scripting unavailable
+     * the field stays empty, which is exactly Dokan's existing behaviour of
+     * keeping the current status: the worse outcome is a listing that stays
+     * a draft, never one that goes on sale unintentionally.
+     *
+     * @param int $postId
+     */
+    public static function submitButtons($postId = 0): void
+    {
+        $postId  = (int) $postId;
+        $current = $postId > 0 ? (string) get_post_status($postId) : '';
+
+        // What 出品する means for this seller: straight to publish for a
+        // trusted one, the approval queue for everyone else -- and for a
+        // listing that is already live, staying live.
+        $target = $current === 'publish'
+            ? 'publish'
+            : PublishGate::unreviewedStatus(get_current_user_id());
+
+        $live = $target === 'publish';
+
+        printf('<input type="hidden" name="post_status" id="mk_post_status" value="">');
+
+        echo '<div class="mk-submit">';
+
+        printf(
+            '<button type="submit" name="dokan_update_product" value="Save Product" '
+            . 'class="mk-submit__btn mk-submit__btn--save" data-mk-status="draft">'
+            . '商品を保存<small>下書きとして保存します。購入者には表示されません。</small></button>'
+        );
+
+        printf(
+            '<button type="submit" name="dokan_update_product" value="Save Product" '
+            . 'class="mk-submit__btn mk-submit__btn--publish" data-mk-status="%s">'
+            . '出品する<small>%s</small></button>',
+            esc_attr($target),
+            esc_html($live
+                ? 'この内容で公開します。購入者が購入できる状態になります。'
+                : 'この内容で出品します。運営の承認後に公開されます。')
+        );
+
+        echo '</div>';
     }
 
     /**
@@ -291,17 +407,18 @@ final class FormGuide
     if (shortLabel) {
         after(shortLabel, help(
             '商品一覧や商品ページの上部に表示される、<strong>短い紹介文</strong>です（1〜2行程度）。'
-            + '<br><span class="mk-field-help__eg">例：昭和レトロなガラスの花瓶。手のひらサイズで、'
-            + '窓辺に置くと光がきれいに透けます。</span>'
+            + '<br><span class="mk-field-help__eg">例：オーバーサイズTシャツ。'
+            + '数回着用しましたが、目立った傷や汚れはありません。</span>'
         ));
     }
 
     if (longLabel) {
         after(longLabel, help(
             '商品ページ下部に表示される、<strong>詳しい説明</strong>です。'
-            + 'サイズ・素材・使用回数・気になる傷や汚れなど、購入前に知りたいことを書いてください。'
-            + '<br><span class="mk-field-help__eg">例：縦15cm×直径8cm／ガラス製／1970年代のもの。'
-            + '底面に小さなカケがありますが、飾る分には目立ちません。喫煙者・ペットはおりません。</span>'
+            + 'サイズ・素材・着用回数・気になる傷や汚れなど、購入前に知りたいことを書いてください。'
+            + '<br><span class="mk-field-help__eg">例：サイズL／着丈約72cm／身幅約58cm／'
+            + 'コットン100％／160cm 腰くらいのサイズ感<br>数回着用。目立った傷や汚れはありません。'
+            + '<br>自宅保管のため、細かな使用感などはご了承ください。</span>'
         ));
     }
 
@@ -320,30 +437,74 @@ final class FormGuide
         after(slugBox, note);
     }
 
-    // ② One or the other, applied where the seller can see it happen.
+    // ⑤ The 1点のみ / 在庫あり choice drives Dokan's own two checkboxes, which
+    // are hidden but still what gets submitted.
     var stock = document.getElementById('_manage_stock');
     var single = document.getElementById('_sold_individually');
+    var modes = document.querySelectorAll('input[name="mk_stock_mode"]');
 
-    if (stock && single) {
-        var pair = [[stock, single], [single, stock]];
+    function applyMode(mode) {
+        if (!stock || !single) {
+            return;
+        }
 
-        pair.forEach(function (couple) {
-            couple[0].addEventListener('change', function () {
-                if (couple[0].checked && couple[1].checked) {
-                    couple[1].checked = false;
+        var wantStock = mode === 'stock';
 
-                    // Dokan shows and hides the quantity fields from this
-                    // event, so it has to be told rather than just unticked.
-                    couple[1].dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            });
-        });
+        if (stock.checked !== wantStock) {
+            stock.checked = wantStock;
 
-        // An existing listing may already have both, from before this rule.
-        if (stock.checked && single.checked) {
-            single.checked = false;
+            // Dokan shows and hides the quantity fields from this event, so it
+            // has to be told rather than just ticked.
+            stock.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        if (single.checked === wantStock) {
+            single.checked = !wantStock;
+            single.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        document.body.classList.toggle('mk-stock-mode-single', !wantStock);
+        document.body.classList.toggle('mk-stock-mode-stock', wantStock);
+    }
+
+    // The choice belongs above the fields it governs. Dokan prints it after
+    // them, because the hook that exists is at the end of the section.
+    var choice = document.querySelector('.mk-stock-choice');
+    var skuField = document.getElementById('_sku');
+    var section = choice ? choice.closest('.dokan-section-content') : null;
+
+    if (choice && skuField && section) {
+        var skuGroup = skuField.closest('.dokan-form-group');
+
+        if (skuGroup && skuGroup.parentNode === section) {
+            section.insertBefore(choice, skuGroup.nextSibling);
         }
     }
+
+    if (modes.length) {
+        Array.prototype.forEach.call(modes, function (radio) {
+            radio.addEventListener('change', function () {
+                if (radio.checked) {
+                    applyMode(radio.value);
+                }
+            });
+
+            if (radio.checked) {
+                applyMode(radio.value);
+            }
+        });
+    }
+
+    // ⑥ Whichever button was pressed says what the save means.
+    var statusField = document.getElementById('mk_post_status');
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mk-status]'), function (button) {
+        button.addEventListener('click', function () {
+            if (statusField) {
+                statusField.value = button.getAttribute('data-mk-status');
+            }
+        });
+    });
 })();
 </script>
         <?php

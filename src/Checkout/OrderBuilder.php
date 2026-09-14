@@ -131,6 +131,14 @@ final class OrderBuilder
         );
         $order->update_meta_data(Details::META_CONDITION, Details::conditionOf($product->get_id()));
 
+        // A listing with a quantity has already had one unit taken for this
+        // order. Nothing on the product records that -- several buyers can be
+        // holding units at once -- so the order is where it is written down,
+        // and it is what the sweeper reads to give an abandoned unit back.
+        if (Reservation::tracksStock($product->get_id())) {
+            $order->update_meta_data(Reservation::META_HOLDS_UNIT, 'yes');
+        }
+
         $order->set_currency('JPY');
         $order->calculate_totals(false); // false: no tax recalculation
         $order->save();
