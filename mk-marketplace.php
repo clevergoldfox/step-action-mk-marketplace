@@ -137,6 +137,7 @@ add_action('plugins_loaded', static function (): void {
     Report\Admin::register();
     Product\Statuses::register();
     Product\PublishGate::register();
+    Product\PriceGate::register();
     Product\Approval::register();
     Product\ListingForm::register();
     Product\Details::register();

@@ -279,6 +279,7 @@ if (is_wp_error($gateUser)) {
         'post_status' => 'publish',
         'post_title'  => 'MK smoke held product',
         'post_author' => $gateUser,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000'],
     ]);
 
     check('publish demoted to draft', get_post_status($held) === 'draft', get_post_status($held));
@@ -295,6 +296,7 @@ if (is_wp_error($gateUser)) {
         'post_status' => 'publish',
         'post_title'  => 'MK smoke held product (trusted)',
         'post_author' => $gateUser,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000'],
     ]);
     check('trusted creator still held while unpayable', get_post_status($trusted) === 'draft', get_post_status($trusted));
 
@@ -319,6 +321,7 @@ if (is_wp_error($gateUser)) {
         'post_status' => 'publish',
         'post_title'  => 'MK smoke free product',
         'post_author' => $gateUser,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000'],
     ]);
 
     check('publishes freely once onboarded', get_post_status($free) === 'publish', get_post_status($free));
@@ -1400,7 +1403,8 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
     // An unpayable creator's submission is kept out of the approval queue:
     // approving it could not put it on sale.
     $p1 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
-        'post_title' => 'smoke: awaiting approval', 'post_author' => $apSeller]);
+        'post_title' => 'smoke: awaiting approval', 'post_author' => $apSeller,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000']]);
     check('unpayable submission held out of the queue', get_post_status($p1) === 'draft', get_post_status($p1));
     check('operator NOT asked to review it', !$typed('listing.pending'));
 
@@ -1418,7 +1422,8 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
     // A second, never-approved submission from the same creator.
     wp_set_current_user($apSeller);
     $p4 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
-        'post_title' => 'smoke: submitted before onboarding', 'post_author' => $apSeller]);
+        'post_title' => 'smoke: submitted before onboarding', 'post_author' => $apSeller,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000']]);
     wp_set_current_user($apAdmin);
 
     // Onboarding completes: the approved one goes live and the creator hears
@@ -1435,7 +1440,8 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
     // Once the creator can be paid, approval works normally.
     $sent = [];
     $p2 = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
-        'post_title' => 'smoke: approvable', 'post_author' => $apSeller]);
+        'post_title' => 'smoke: approvable', 'post_author' => $apSeller,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000']]);
     check('payable submission goes straight to the queue', get_post_status($p2) === 'pending', get_post_status($p2));
     wp_update_post(['ID' => $p2, 'post_status' => 'publish']);
     check('admin approval publishes for a payable creator', get_post_status($p2) === 'publish');
@@ -1443,7 +1449,8 @@ if (is_wp_error($apSeller) || $apAdmin === 0) {
 
     // An administrator's own products are not a seller's and are unaffected.
     $p3 = wp_insert_post(['post_type' => 'product', 'post_status' => 'publish',
-        'post_title' => 'smoke: admin own', 'post_author' => $apAdmin]);
+        'post_title' => 'smoke: admin own', 'post_author' => $apAdmin,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000']]);
     check("admin's own product publishes", get_post_status($p3) === 'publish');
 
     check('pending count visible', MK\Product\Approval::pendingCount() >= 0);
@@ -1916,6 +1923,7 @@ echo "\n=== 出品制限（運営操作） ===\n";
         'post_type'   => 'product',
         'post_status' => 'publish',
         'post_author' => $lateSeller,
+        'meta_input' => ['_regular_price' => '3000', '_price' => '3000'],
     ]);
 
     add_filter('wp_insert_post_data', ['MK\Creator\Restriction', 'gate'], 20, 2);
@@ -1968,6 +1976,107 @@ echo "\n=== 出品制限（運営操作） ===\n";
 }
 
 remove_filter('mk_should_notify', $muted, 99);
+
+echo "\n=== 価格未設定の出品は売り物にしない ===\n";
+
+// 客先で出た不具合そのもの：価格のない商品が公開され、購入ボタンは押せるのに
+// 何も起きなかった。原因は2つあり、どちらも直している。
+$priceSeller = get_user_by('login', 'mk_test_creator');
+$priceSeller = $priceSeller ? (int) $priceSeller->ID : 0;
+
+if ($priceSeller === 0) {
+    $priceSeller = wp_insert_user(['user_login' => 'mk_smoke_price_' . wp_rand(1000, 9999),
+        'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+}
+
+check('50円未満は売り物にしない', !MK\Product\PriceGate::isSellable(0));
+check('50円は売り物になる', MK\Product\PriceGate::isSellable(MK\Support\Money::MIN_YEN));
+check('上限を超える価格は売り物にしない',
+    !MK\Product\PriceGate::isSellable(MK\Support\Money::MAX_YEN + 1));
+
+$pricedId = wp_insert_post(['post_title' => 'mk smoke priced', 'post_type' => 'product',
+    'post_status' => 'draft', 'post_author' => $priceSeller]);
+
+update_post_meta($pricedId, '_regular_price', '3000');
+update_post_meta($pricedId, '_price', '3000');
+
+// wc_get_product() needs WooCommerce's data stores, which do not exist during
+// plugin bootstrap -- reading the price through it reported 0 for every
+// product and withdrew seven priced listings on the live site.
+check('価格はメタから直接読む', MK\Product\PriceGate::priceOf($pricedId) === 3000,
+    (string) MK\Product\PriceGate::priceOf($pricedId));
+
+wp_update_post(['ID' => $pricedId, 'post_status' => 'publish']);
+check('価格のある商品は公開できる', get_post_status($pricedId) === 'publish',
+    (string) get_post_status($pricedId));
+
+$freeId = wp_insert_post(['post_title' => 'mk smoke priceless', 'post_type' => 'product',
+    'post_status' => 'draft', 'post_author' => $priceSeller]);
+
+wp_update_post(['ID' => $freeId, 'post_status' => 'publish']);
+
+check('価格のない商品は公開されない', get_post_status($freeId) === 'draft',
+    (string) get_post_status($freeId));
+check('保留した理由が残る',
+    get_post_meta($freeId, MK\Product\PriceGate::META_HELD, true) === 'yes');
+
+wp_update_post(['ID' => $freeId, 'post_status' => 'pending']);
+check('審査申請も止まる', get_post_status($freeId) === 'draft');
+
+update_post_meta($freeId, '_regular_price', '2000');
+update_post_meta($freeId, '_price', '2000');
+wp_update_post(['ID' => $freeId, 'post_status' => 'publish']);
+
+check('価格を入れれば公開できる', get_post_status($freeId) === 'publish',
+    (string) get_post_status($freeId));
+check('保留の印は消える', get_post_meta($freeId, MK\Product\PriceGate::META_HELD, true) === '');
+
+// Dokan の内部商品（Reverse Withdrawal Payment）は価格0が正常。これを下書きに
+// してしまい、実際に運営サイトで機能を壊した。
+$adminProduct = wp_insert_post(['post_title' => 'mk smoke platform', 'post_type' => 'product',
+    'post_status' => 'draft', 'post_author' => 1]);
+
+check('運営自身の商品は対象外', !MK\Product\PriceGate::applies($adminProduct));
+
+wp_update_post(['ID' => $adminProduct, 'post_status' => 'publish']);
+check('価格0でも運営の商品は公開できる', get_post_status($adminProduct) === 'publish',
+    (string) get_post_status($adminProduct));
+
+// 購入できない理由を必ず表示する。表示されないと「ボタンが効かない」に見える。
+$GLOBALS['product'] = wc_get_product($pricedId);
+$_GET['mk_error'] = '購入手続きを開始できませんでした。';
+ob_start(); MK\Checkout\Controller::renderBuyButton(); $withError = (string) ob_get_clean();
+unset($_GET['mk_error']);
+
+check('失敗した理由を商品ページに表示する', str_contains($withError, 'mk-error')
+    && str_contains($withError, '購入手続きを開始できませんでした。'));
+
+$_GET['mk_error'] = '<script>alert(1)</script>';
+ob_start(); MK\Checkout\Controller::renderBuyButton(); $xss = (string) ob_get_clean();
+unset($_GET['mk_error']);
+
+check('理由にタグを混ぜられない', !str_contains($xss, '<script>'));
+check('空になった理由は表示しない', !str_contains($xss, 'mk-error'));
+
+// A published listing whose price is emptied by some other route must not
+// offer a button that cannot work.
+update_post_meta($pricedId, '_price', '');
+update_post_meta($pricedId, '_regular_price', '');
+$GLOBALS['product'] = wc_get_product($pricedId);
+
+ob_start(); MK\Checkout\Controller::renderBuyButton(); $noPrice = (string) ob_get_clean();
+
+check('価格がなければ購入ボタンを出さない', !str_contains($noPrice, 'mk-buy-form'));
+check('代わりに理由を書く', str_contains($noPrice, '販売価格が設定されていない'));
+
+unset($GLOBALS['product']);
+
+wp_delete_post($pricedId, true);
+wp_delete_post($freeId, true);
+wp_delete_post($adminProduct, true);
+
+check('後始末：価格テスト用の商品を削除',
+    !get_post($pricedId) && !get_post($freeId) && !get_post($adminProduct));
 
 echo "\n=== 返品・返金のルール ===\n";
 

@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 11;
+    public const SCHEMA_VERSION = 12;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -189,8 +189,55 @@ final class Migrator
         self::useFullListingForm();
         self::useLegacyProductEditor();
         self::nameExistingShops();
+        self::withdrawPricelessListings();
 
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
+    }
+
+    /**
+     * Take down anything already on sale that has no price.
+     *
+     * PriceGate stops it happening from now on, but it runs on save and these
+     * listings are already published -- nothing will save them again until
+     * someone edits them, and until then they keep offering a buy button that
+     * cannot work. One such listing is what the client reported.
+     *
+     * Withdrawn to draft rather than deleted: the listing is somebody's work
+     * and the only thing wrong with it is a missing number. It carries the
+     * same marker a gated save would leave, so its creator gets the same
+     * explanation and the same link back to the edit screen.
+     */
+    private static function withdrawPricelessListings(): void
+    {
+        $ids = get_posts([
+            'post_type'      => 'product',
+            'post_status'    => ['publish', 'pending'],
+            'posts_per_page' => 500,
+            'fields'         => 'ids',
+        ]);
+
+        $withdrawn = 0;
+
+        foreach ($ids as $id) {
+            $id = (int) $id;
+
+            if (!\MK\Product\PriceGate::applies($id)) {
+                continue;
+            }
+
+            if (\MK\Product\PriceGate::isSellable(\MK\Product\PriceGate::priceOf($id))) {
+                continue;
+            }
+
+            wp_update_post(['ID' => $id, 'post_status' => 'draft']);
+            update_post_meta($id, \MK\Product\PriceGate::META_HELD, 'yes');
+
+            $withdrawn++;
+        }
+
+        if ($withdrawn > 0) {
+            error_log(sprintf('[mk-marketplace] withdrew %d listings with no price', $withdrawn));
+        }
     }
 
     /**

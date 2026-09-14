@@ -83,6 +83,19 @@ final class OrderBuilder
         array $optionGroupIds,
     ): WC_Order {
         $productAmount = (int) $product->get_price();
+
+        // Checked here as well as by PriceGate, and thrown as a RuntimeException
+        // on purpose: those carry a buyer-facing Japanese message, while
+        // Money's InvalidArgumentException is a developer message that the
+        // controller can only translate into "時間をおいてお試しください" --
+        // advice that is useless, because waiting fixes nothing.
+        if ($productAmount < Money::MIN_YEN || $productAmount > Money::MAX_YEN) {
+            throw new RuntimeException(
+                'この商品は販売価格が設定されていないため、購入手続きに進めません。'
+                . '出品者の方に価格の設定をご依頼ください。'
+            );
+        }
+
         Money::assertValidPrice($productAmount);
 
         [$optionAmount, $optionLabel] = $this->resolveOptions($product->get_id(), $optionGroupIds);

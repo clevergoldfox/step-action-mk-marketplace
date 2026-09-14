@@ -284,10 +284,33 @@ final class Controller
             return;
         }
 
+        // Before anything else, and before every early return below.
+        //
+        // bailToProduct() has always sent the buyer back here with the reason
+        // in the URL, and nothing has ever displayed it. Every refusal --
+        // sold, gone, creator not payable, no price -- therefore looked
+        // identical from the buyer's chair: press 購入手続きへ, the page
+        // reloads, nothing happens. The client reported it as a dead button,
+        // which is exactly what it was.
+        self::renderError();
+
         $status = get_post_status($product->get_id());
 
         if ($status !== 'publish') {
             self::renderUnavailable($product, $status);
+
+            return;
+        }
+
+        // A price an order cannot be built from, checked before anything is
+        // asked of the visitor. PriceGate keeps such a listing out of publish,
+        // so reaching this means the price was emptied by a route that did not
+        // re-save the post -- and a button that cannot work must not be
+        // offered, nor a login walked into on the way to one.
+        if (!\MK\Product\PriceGate::isSellable(\MK\Product\PriceGate::priceOf($product->get_id()))) {
+            echo '<p class="mk-unavailable"><strong>この商品は現在購入できません</strong><br>'
+                . '販売価格が設定されていないため、購入手続きに進めません。'
+                . '出品者の方は、商品編集画面から価格をご設定ください。</p>';
 
             return;
         }
@@ -337,6 +360,29 @@ final class Controller
 
         echo '<button type="submit" class="single_add_to_cart_button button alt">購入手続きへ</button>';
         echo '</form>';
+    }
+
+    /**
+     * Whatever went wrong on the last attempt, said out loud.
+     *
+     * The message is put in the URL by bailToProduct(), so it is attacker
+     * controllable and is escaped as text rather than trusted as markup.
+     */
+    private static function renderError(): void
+    {
+        if (empty($_GET['mk_error'])) {
+            return;
+        }
+
+        $message = sanitize_text_field(rawurldecode((string) wp_unslash($_GET['mk_error'])));
+
+        // Sanitising can empty the value entirely -- it does for a markup
+        // payload -- and an empty red box is its own kind of broken.
+        if ($message === '') {
+            return;
+        }
+
+        printf('<p class="mk-error" role="alert">%s</p>', esc_html($message));
     }
 
     /**
