@@ -49,6 +49,12 @@ final class Frontend
             return;
         }
 
+        // A declined message video is explained by its own panel. The generic
+        // wording here would tell the buyer they had reported something.
+        if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && \MK\Order\VideoDelivery::isDeclined($order)) {
+            return;
+        }
+
         $service = new Service();
 
         if ($service->openCountFor(Service::TARGET_ORDER, $order->get_id()) > 0) {

@@ -57,6 +57,9 @@ final class Service
             'size_mismatch'    => '掲載サイズと実物が明らかに異なる',
             'condition_mismatch' => '掲載された商品の状態と実物に重大な相違がある',
             'wrong_item'   => '掲載された商品と違うものが届いた',
+            // Filed by a creator declining a message video request, never by a
+            // buyer: it is deliberately absent from returnGrounds().
+            'creator_declined' => 'クリエイターの辞退（依頼内容の確認）',
             'damaged'      => '商品が破損していた',
             'nuisance'     => '迷惑行為',
             'other'        => 'その他',

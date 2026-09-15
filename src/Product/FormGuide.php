@@ -76,6 +76,14 @@ final class FormGuide
             return;   // platform-owned products are not ours to change
         }
 
+        // A message video has no parcel and no stock. Its own rules apply, and
+        // applying these on top would put back what those take away.
+        if (MessageVideo::isMessageVideo($productId)) {
+            MessageVideo::normaliseStock($productId);
+
+            return;
+        }
+
         foreach (['_downloadable', '_virtual'] as $key) {
             if (get_post_meta($productId, $key, true) !== 'no') {
                 update_post_meta($productId, $key, 'no');
@@ -187,6 +195,11 @@ final class FormGuide
         }
 
         $classes[] = self::editingStocked() ? 'mk-stock-mode-stock' : 'mk-stock-mode-single';
+
+        // Which half of the form shows -- goods or message video -- settled
+        // while the page is built, for the same reason as the stock mode.
+        $productId = isset($_GET['product_id']) ? (int) $_GET['product_id'] : 0;
+        $classes[] = MessageVideo::isMessageVideo($productId) ? 'mk-kind-message-video' : 'mk-kind-physical';
 
         return $classes;
     }
@@ -491,6 +504,42 @@ final class FormGuide
 
             if (radio.checked) {
                 applyMode(radio.value);
+            }
+        });
+    }
+
+    // メッセージ動画 / 通常の商品. The choice sits just below the row holding the
+    // product image, where the client asked for it, and decides which half of
+    // the form shows. Below the row rather than inside the image column: that
+    // column is half the width of a phone, and eight message types with their
+    // descriptions wrapped every three or four characters in it.
+    var kindBlock = document.querySelector('.mk-kind');
+    var shortDescription = document.querySelector('.dokan-product-short-description');
+
+    if (kindBlock && shortDescription && shortDescription.parentNode) {
+        shortDescription.parentNode.insertBefore(kindBlock, shortDescription);
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="mk_kind"]'), function (radio) {
+        radio.addEventListener('change', function () {
+            if (radio.checked) {
+                var video = radio.value === 'message_video';
+                document.body.classList.toggle('mk-kind-message-video', video);
+                document.body.classList.toggle('mk-kind-physical', !video);
+            }
+        });
+    });
+
+    // At least one message type, or the listing cannot be ordered at all.
+    var productForm = document.querySelector('form.dokan-product-edit-form');
+
+    if (productForm) {
+        productForm.addEventListener('submit', function (event) {
+            var video = document.querySelector('input[name="mk_kind"][value="message_video"]');
+
+            if (video && video.checked && !document.querySelector('input[name="mk_message_types[]"]:checked')) {
+                event.preventDefault();
+                alert('対応できるメッセージの種類を1つ以上選んでください。');
             }
         });
     }

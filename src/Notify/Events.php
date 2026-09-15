@@ -6,6 +6,7 @@ namespace MK\Notify;
 use MK\Order\DispatchDeadline;
 use MK\Order\Shipping;
 use MK\Order\Statuses;
+use MK\Product\MessageVideo;
 use MK\Support\Money;
 use WC_Order;
 
@@ -32,6 +33,8 @@ final class Events
         add_action('mk_dispatch_overdue', [self::class, 'onDispatchOverdue'], 10, 2);
         add_action('mk_creator_repeatedly_late', [self::class, 'onRepeatedlyLate'], 10, 2);
         add_action('mk_creator_charged', [self::class, 'onCreatorCharged'], 10, 3);
+        add_action('mk_video_declined', [self::class, 'onVideoDeclined'], 10, 2);
+        add_action('mk_video_decline_rejected', [self::class, 'onDeclineRejected'], 10, 2);
         add_action('mk_transfer_sent', [self::class, 'onTransferSent'], 10, 3);
         add_action('transition_post_status', [self::class, 'onListingStatus'], 10, 3);
     }
@@ -120,6 +123,12 @@ final class Events
 
     private static function notifyCreatorOfSale(WC_Order $order): void
     {
+        if (MessageVideo::isMessageVideoOrder($order)) {
+            self::notifyCreatorOfVideoRequest($order);
+
+            return;
+        }
+
         $creatorId = (int) $order->get_meta('_mk_creator_id');
         $title     = (string) $order->get_meta('_mk_title_snapshot');
         $creator   = (int) $order->get_meta('_mk_creator_amount');
@@ -146,6 +155,12 @@ final class Events
 
     private static function notifyBuyerOfShipment(WC_Order $order): void
     {
+        if (MessageVideo::isMessageVideoOrder($order)) {
+            self::notifyBuyerOfVideo($order);
+
+            return;
+        }
+
         $carrier  = (string) $order->get_meta(Shipping::META_CARRIER_NAME);
         $tracking = (string) $order->get_meta(Shipping::META_TRACKING);
         $noTrack  = $order->get_meta(Shipping::META_NO_TRACKING) === 'yes';
@@ -216,6 +231,12 @@ final class Events
 
         $title = (string) $order->get_meta('_mk_title_snapshot');
         $due   = DispatchDeadline::dueLabel($order);
+
+        if (MessageVideo::isMessageVideoOrder($order)) {
+            self::notifyVideoOverdue($order, $creatorId, $title, $due);
+
+            return;
+        }
 
         Dispatcher::send(new Notification(
             type: 'dispatch.overdue.creator',
@@ -320,6 +341,184 @@ final class Events
                 context: ['creator_id' => $creatorId],
             ));
         }
+    }
+
+    // ------------------------------------------------------ message videos
+
+    /**
+     * A request has arrived, and everything needed to record it is in the
+     * message: the creator should not have to open the site to learn whose
+     * name to say.
+     */
+    private static function notifyCreatorOfVideoRequest(WC_Order $order): void
+    {
+        $body = (string) $order->get_meta(MessageVideo::META_REQUEST_BODY);
+
+        Dispatcher::send(new Notification(
+            type: 'video.requested',
+            userId: (int) $order->get_meta('_mk_creator_id'),
+            subject: 'メッセージ動画のリクエストが届きました',
+            body: sprintf(
+                "「%s」のリクエストが届きました。\n\n"
+                . "ご注文番号：#%d\n"
+                . "メッセージの種類：%s\n"
+                . "呼んでほしいお名前：%s\n"
+                . "入れてほしい内容：%s\n"
+                . "動画時間：%s\n"
+                . "お受け取り予定額：%s（手数料差引後）\n\n"
+                . "送信期限：%s\n\n"
+                . "撮影した動画をご自身のVimeoアカウントに限定公開でアップロードし、"
+                . "出品者ダッシュボードの注文画面からURLを送信してください。\n"
+                . "依頼内容に不適切な表現が含まれているなどお受けできない場合は、撮影前に同じ画面から辞退できます。",
+                (string) $order->get_meta('_mk_title_snapshot'),
+                $order->get_id(),
+                (string) $order->get_meta(MessageVideo::META_TYPE_LABEL),
+                (string) $order->get_meta(MessageVideo::META_REQUEST_NAME),
+                $body !== '' ? $body : '（指定なし）',
+                MessageVideo::lengths()[(string) $order->get_meta(MessageVideo::META_LENGTH)] ?? '—',
+                Money::format((int) $order->get_meta('_mk_creator_amount')),
+                DispatchDeadline::dueLabel($order)
+            ),
+            short: sprintf('メッセージ動画のリクエストが届きました（%s）。', (string) $order->get_meta(MessageVideo::META_TYPE_LABEL)),
+            url: dokan_get_navigation_url('orders'),
+            context: ['order_id' => $order->get_id()],
+        ));
+    }
+
+    private static function notifyBuyerOfVideo(WC_Order $order): void
+    {
+        Dispatcher::send(new Notification(
+            type: 'video.sent',
+            userId: $order->get_customer_id(),
+            subject: 'メッセージ動画が届きました',
+            body: sprintf(
+                "ご注文 #%d のメッセージ動画を、クリエイターが送信しました。\n\n"
+                . "注文詳細ページから動画をご覧いただけます。内容をご確認のうえ「受取完了」を押してください。\n"
+                . "%d日間受取完了が行われない場合は、自動的に受取完了となります。\n\n"
+                . "動画のURLの第三者への共有・転載・再配布は禁止されています。",
+                $order->get_id(),
+                (int) get_option('mk_auto_complete_days', 7)
+            ),
+            short: 'メッセージ動画が届きました。',
+            url: $order->get_view_order_url(),
+            context: ['order_id' => $order->get_id()],
+        ));
+    }
+
+    private static function notifyVideoOverdue(WC_Order $order, int $creatorId, string $title, string $due): void
+    {
+        $orderId = $order->get_id();
+
+        Dispatcher::send(new Notification(
+            type: 'video.overdue.creator',
+            userId: $creatorId,
+            subject: '【重要】送信期限を過ぎています',
+            body: sprintf(
+                "ご注文 #%d（%s）のメッセージ動画の送信期限（%s）を過ぎていますが、送信が確認できません。\n\n"
+                . "撮影済みの場合は、至急注文画面から動画のURLを送信してください。\n\n"
+                . "期限を過ぎているため、購入者はこの取引のキャンセルを申請できる状態です。"
+                . "キャンセルとなった場合、この取引の売上はお支払いできません。",
+                $orderId,
+                $title,
+                $due
+            ),
+            short: sprintf('注文 #%d の送信期限を過ぎています。', $orderId),
+            url: dokan_get_navigation_url('orders'),
+            context: ['order_id' => $orderId],
+        ));
+
+        Dispatcher::send(new Notification(
+            type: 'video.overdue.buyer',
+            userId: $order->get_customer_id(),
+            subject: 'メッセージ動画の送信予定日を過ぎています',
+            body: sprintf(
+                "ご注文 #%d（%s）について、クリエイターがお約束した送信期限（%s）を過ぎましたが、"
+                . "動画の送信が確認できておりません。クリエイターへは通知をお送りしました。\n\n"
+                . "もう少しお待ちいただくこともできますが、キャンセルをご希望の場合は、"
+                . "注文詳細ページから「キャンセルを申請する」をお選びください。"
+                . "運営が状況を確認のうえ、キャンセル・ご返金の対応を行います。\n\n"
+                . "お支払いいただいた代金は、クリエイターへはまだお渡ししておりません。",
+                $orderId,
+                $title,
+                $due
+            ),
+            short: sprintf('注文 #%d の送信期限を過ぎています。キャンセル申請が可能です。', $orderId),
+            url: $order->get_view_order_url(),
+            context: ['order_id' => $orderId],
+        ));
+    }
+
+    /**
+     * The buyer is told as soon as the creator declines, not when the refund
+     * lands. The operator also hears, through the report the decline opened.
+     */
+    public static function onVideoDeclined(int $orderId, int $creatorId): void
+    {
+        $order = wc_get_order($orderId);
+
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+
+        Dispatcher::send(new Notification(
+            type: 'video.declined.buyer',
+            userId: $order->get_customer_id(),
+            subject: 'メッセージ動画のリクエストについてのお知らせ',
+            body: sprintf(
+                "ご注文 #%d について、クリエイターから今回のリクエストをお受けできないとの連絡がありました。\n\n"
+                . "運営が内容を確認のうえ、ご返金の手続きを行います。結果はあらためてメールでお知らせします。\n"
+                . "お支払いいただいた代金は、クリエイターへはお渡ししておりません。",
+                $orderId
+            ),
+            short: sprintf('注文 #%d のリクエストについて、運営が確認中です。', $orderId),
+            url: $order->get_view_order_url(),
+            context: ['order_id' => $orderId],
+        ));
+    }
+
+    /** The operator decided the video should be recorded after all. */
+    public static function onDeclineRejected(int $orderId, int $creatorId): void
+    {
+        $order = wc_get_order($orderId);
+
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+
+        $due = DispatchDeadline::dueLabel($order);
+
+        Dispatcher::send(new Notification(
+            type: 'video.decline_rejected.creator',
+            userId: $creatorId,
+            subject: '辞退についての確認結果',
+            body: sprintf(
+                "ご注文 #%d の辞退について運営で確認した結果、撮影をお願いすることになりました。\n\n"
+                . "送信期限を %s に再設定しましたので、期限までに動画のURLを送信してください。\n"
+                . "ご不明な点がございましたら、運営までご連絡ください。",
+                $orderId,
+                $due
+            ),
+            short: sprintf('注文 #%d は撮影をお願いすることになりました。', $orderId),
+            url: dokan_get_navigation_url('orders'),
+            context: ['order_id' => $orderId],
+        ));
+
+        // The buyer was told a refund was being considered, so they hear the
+        // outcome too.
+        Dispatcher::send(new Notification(
+            type: 'video.decline_rejected.buyer',
+            userId: $order->get_customer_id(),
+            subject: 'メッセージ動画のリクエストについて（確認結果）',
+            body: sprintf(
+                "ご注文 #%d について運営で確認した結果、クリエイターが撮影を行うことになりました。\n\n"
+                . "%s頃までに動画が送信される予定です。送信されましたらメールでお知らせします。",
+                $orderId,
+                $due
+            ),
+            short: sprintf('注文 #%d の動画は撮影されることになりました。', $orderId),
+            url: $order->get_view_order_url(),
+            context: ['order_id' => $orderId],
+        ));
     }
 
     /** Raised by TransferService once the money has actually gone. */

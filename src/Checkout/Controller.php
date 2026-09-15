@@ -332,7 +332,20 @@ final class Controller
             return;
         }
 
-        $options = self::optionsFor($product->get_id());
+        $isVideo = \MK\Product\MessageVideo::isMessageVideo($product->get_id());
+
+        // A message video with no type on offer cannot be ordered: the buyer
+        // would have nothing to choose and the creator nothing to record.
+        if ($isVideo && !\MK\Product\MessageVideo::supportedTypes($product->get_id())) {
+            echo '<p class="mk-unavailable"><strong>現在リクエストを受け付けていません</strong><br>'
+                . 'このクリエイターが受け付けているメッセージの種類が、現在ありません。</p>';
+
+            return;
+        }
+
+        // Options are for goods -- gift wrapping, a card. A video is made to
+        // the buyer's request, and the request takes their place.
+        $options = $isVideo ? [] : self::optionsFor($product->get_id());
 
         printf(
             '<form method="post" action="%s" class="mk-buy-form">',
@@ -340,6 +353,10 @@ final class Controller
         );
 
         wp_nonce_field(self::NONCE_BUY);
+
+        if ($isVideo) {
+            echo \MK\Product\MessageVideo::renderBuyFields($product->get_id()); // escaped inside
+        }
 
         if ($options) {
             echo '<div class="mk-options"><p><strong>オプション</strong></p>';
@@ -497,15 +514,25 @@ final class Controller
             self::bailToProduct(0, 'この商品は見つかりませんでした。');
         }
 
-        $options = isset($_POST['mk_options']) && is_array($_POST['mk_options'])
+        $isVideo = \MK\Product\MessageVideo::isMessageVideo($product->get_id());
+
+        $options = !$isVideo && isset($_POST['mk_options']) && is_array($_POST['mk_options'])
             ? array_map('intval', wp_unslash($_POST['mk_options']))
             : [];
 
         try {
+            // Validated before any order exists, so a bad request never leaves
+            // a stray unpaid order behind. Its message is buyer-facing and is
+            // shown on the product page by renderError().
+            $request = $isVideo
+                ? \MK\Product\MessageVideo::validateRequest($product->get_id(), $_POST)
+                : [];
+
             $order = (new OrderBuilder())->create(
                 $product,
                 wp_get_current_user(),
-                $options
+                $options,
+                $request
             );
 
             (new PaymentService())->createIntent(

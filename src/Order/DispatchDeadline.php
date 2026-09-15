@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace MK\Order;
 
 use MK\Product\Details;
+use MK\Product\MessageVideo;
 use MK\Report\Service as ReportService;
 use MK\Schedule\Jobs;
 use WC_Order;
@@ -70,7 +71,31 @@ final class DispatchDeadline
     /** Days promised on this order, falling back for pre-feature listings. */
     public static function daysFor(WC_Order $order): int
     {
-        return Details::dispatchDays((string) $order->get_meta(self::META_DISPATCH));
+        $key = (string) $order->get_meta(self::META_DISPATCH);
+
+        // A message video carries its delivery promise under the same key,
+        // prefixed so the two vocabularies can never be mistaken for each other.
+        if (str_starts_with($key, 'video-')) {
+            return MessageVideo::deliveryDays(substr($key, 6));
+        }
+
+        return Details::dispatchDays($key);
+    }
+
+    /** The promise as the buyer saw it: 「2〜3日で発送」 or 「7日以内に送信」. */
+    public static function promiseLabel(WC_Order $order): string
+    {
+        $key = (string) $order->get_meta(self::META_DISPATCH);
+
+        return str_starts_with($key, 'video-')
+            ? MessageVideo::deliveryLabel(substr($key, 6))
+            : Details::dispatchLabel($key);
+    }
+
+    /** 「送信」 for a message video, 「発送」 for a parcel. */
+    public static function verb(WC_Order $order): string
+    {
+        return MessageVideo::isMessageVideoOrder($order) ? '送信' : '発送';
     }
 
     /** GMT 'Y-m-d H:i:s', or '' if this order has no deadline. */
@@ -81,6 +106,11 @@ final class DispatchDeadline
 
     public static function isOverdue(WC_Order $order): bool
     {
+        // A declined video is with the operator, not late.
+        if (VideoDelivery::isDeclined($order)) {
+            return false;
+        }
+
         return $order->get_meta(self::META_OVERDUE_AT) !== ''
             || ($order->get_status() === Statuses::PAID
                 && self::dueAt($order) !== ''
@@ -119,14 +149,21 @@ final class DispatchDeadline
             return;   // shipped, cancelled, or otherwise moved on
         }
 
+        if (VideoDelivery::isDeclined($order)) {
+            return;   // with the operator; a decline is not lateness
+        }
+
         if ($order->get_meta(self::META_OVERDUE_AT) !== '') {
             return;   // a retried job; do not re-notify or re-count
         }
 
         $order->update_meta_data(self::META_OVERDUE_AT, gmdate('Y-m-d H:i:s'));
+        $verb = self::verb($order);
+
         $order->add_order_note(sprintf(
-            '発送期限（%s）を過ぎましたが、発送登録がありません。'
+            '%1$s期限（%2$s）を過ぎましたが、%1$sされていません。'
             . '出品者・購入者へ通知し、購入者がキャンセルを申請できる状態にしました。',
+            $verb,
             self::dueLabel($order)
         ));
         $order->save();
@@ -197,6 +234,12 @@ final class DispatchDeadline
         }
 
         if (!self::isOverdue($order)) {
+            // A message video has its own panel saying this in the words that
+            // fit it; two panels would contradict each other.
+            if (MessageVideo::isMessageVideoOrder($order)) {
+                return;
+            }
+
             printf(
                 '<section class="mk-dispatch"><h2>発送予定</h2>'
                 . '<p>出品者は <strong>%s頃まで</strong>に発送する予定です（%s）。'
@@ -226,11 +269,14 @@ final class DispatchDeadline
             self::NONCE
         );
 
-        echo '<section class="mk-dispatch mk-dispatch--late"><h2>発送期限を過ぎています</h2>';
+        $verb = self::verb($order);
+
+        printf('<section class="mk-dispatch mk-dispatch--late"><h2>%s期限を過ぎています</h2>', esc_html($verb));
 
         printf(
-            '<p>この取引の発送期限は <strong>%s</strong> でしたが、'
-            . 'まだ発送の登録がありません。出品者へは通知済みです。</p>',
+            '<p>この取引の%1$s期限は <strong>%2$s</strong> でしたが、'
+            . 'まだ%1$sされていません。出品者へは通知済みです。</p>',
+            esc_html($verb),
             esc_html(self::dueLabel($order))
         );
 
@@ -258,6 +304,21 @@ final class DispatchDeadline
         if ((int) $order->get_meta('_mk_creator_id') !== get_current_user_id()
             && !current_user_can('manage_woocommerce')
         ) {
+            return;
+        }
+
+        if (MessageVideo::isMessageVideoOrder($order)) {
+            // The request panel already shows the deadline; only lateness
+            // needs saying here, in the words that fit a video.
+            if (self::isOverdue($order)) {
+                printf(
+                    '<div class="dokan-alert dokan-alert-danger">'
+                    . '<strong>送信期限（%s）を過ぎています。</strong> '
+                    . '購入者はこの取引のキャンセルを申請できます。撮影済みの場合は、至急動画を送信してください。</div>',
+                    esc_html(self::dueLabel($order))
+                );
+            }
+
             return;
         }
 
@@ -333,7 +394,8 @@ final class DispatchDeadline
             : '';
 
         $comment = trim(sprintf(
-            "【キャンセル申請】発送期限 %s を過ぎても発送されていません。\n%s",
+            "【キャンセル申請】%1\$s期限 %2\$s を過ぎても%1\$sされていません。\n%3\$s",
+            self::verb($order),
             self::dueLabel($order),
             $comment
         ));

@@ -68,6 +68,12 @@ final class Reservation
      */
     public function lock(int $productId, int $buyerId): bool
     {
+        // An offer to record, not an object. Any number of buyers may order a
+        // message video; locking it would sell exactly one.
+        if (MessageVideo::isMessageVideo($productId)) {
+            return true;
+        }
+
         if (self::tracksStock($productId)) {
             return $this->takeUnit($productId);
         }
@@ -182,6 +188,10 @@ final class Reservation
     /** Payment failed or was abandoned: put it back on sale. */
     public function release(int $productId): void
     {
+        if (MessageVideo::isMessageVideo($productId)) {
+            return;   // nothing was taken, so nothing goes back
+        }
+
         if (self::tracksStock($productId)) {
             $this->returnUnit($productId);
 
@@ -217,6 +227,10 @@ final class Reservation
      */
     public function markSold(int $productId): void
     {
+        if (MessageVideo::isMessageVideo($productId)) {
+            return;   // stays on sale for the next buyer
+        }
+
         if (self::tracksStock($productId)) {
             delete_post_meta($productId, self::META_RESERVED_UNTIL);
             clean_post_cache($productId);

@@ -210,6 +210,12 @@ final class Details
             return;
         }
 
+        // A message video has no condition and is not posted; MessageVideo
+        // shows its own facts in this spot.
+        if (MessageVideo::isMessageVideo($product->get_id())) {
+            return;
+        }
+
         $productId = $product->get_id();
         $condition = self::conditionOf($productId);
         $dispatch  = self::dispatchOf($productId);

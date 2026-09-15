@@ -1979,6 +1979,326 @@ echo "\n=== 出品制限（運営操作） ===\n";
 
 remove_filter('mk_should_notify', $muted, 99);
 
+echo "\n=== クリエイターが自分の注文を開けること ===\n";
+
+// Dokan grants a vendor their order only if dokan_orders has a row for it.
+// Our checkout bypasses the cart that normally writes that row, so no order
+// was ever openable by its creator -- 発送登録 included. Found by driving a
+// real order through the real creator page.
+$syncSeller = get_user_by('login', 'mk_test_creator');
+$syncBuyer  = get_user_by('login', 'mk_test_buyer');
+
+if (!$syncSeller || !$syncBuyer) {
+    check('sync fixtures', false, 'test creator or buyer missing');
+} else {
+    $muteSync = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteSync, 99);
+
+    $syncProduct = new WC_Product_Simple();
+    $syncProduct->set_name('mk smoke 注文の紐付け');
+    $syncProduct->set_status('publish');
+    $syncProduct->set_regular_price('2000');
+    $syncProduct->save();
+    $syncProductId = $syncProduct->get_id();
+    wp_update_post(['ID' => $syncProductId, 'post_author' => $syncSeller->ID]);
+
+    $syncOrder   = (new MK\Checkout\OrderBuilder())->create(wc_get_product($syncProductId), $syncBuyer);
+    $syncOrderId = $syncOrder->get_id();
+
+    global $wpdb;
+    $syncRows = static fn (): array => $wpdb->get_results($wpdb->prepare(
+        "SELECT seller_id, order_status, net_amount FROM {$wpdb->prefix}dokan_orders WHERE order_id = %d",
+        $syncOrderId
+    ));
+
+    check('作成した注文がクリエイターに紐付く', dokan_is_seller_has_order($syncSeller->ID, $syncOrderId));
+    check('他のユーザーには紐付かない', !dokan_is_seller_has_order($syncBuyer->ID, $syncOrderId));
+    check('Dokanが出品者を正しく判定する', dokan_get_seller_id_by_order($syncOrderId) === $syncSeller->ID,
+        (string) dokan_get_seller_id_by_order($syncOrderId));
+
+    // The list is a different lookup from the detail page: it filters on the
+    // _dokan_vendor_id order meta. With only the table row the creator could
+    // open this order from a link but never see it listed.
+    check('注文にDokanの出品者IDが入る',
+        (int) wc_get_order($syncOrderId)->get_meta('_dokan_vendor_id') === $syncSeller->ID);
+    check('クリエイターの注文一覧に出る',
+        in_array($syncOrderId, array_map('intval', (array) dokan()->order->all([
+            'seller_id' => $syncSeller->ID,
+            'return'    => 'ids',
+            'limit'     => 50,
+        ])), true));
+
+    // Dokan's own sync would also book the sale into its vendor balance,
+    // showing a second, withdrawable figure that never matches Stripe.
+    check('Dokanの残高には計上しない',
+        (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}dokan_vendor_balance WHERE trn_id = %d AND trn_type = 'dokan_orders'",
+            $syncOrderId
+        )) === 0);
+
+    MK\Order\DokanSync::ensure($syncOrder);
+    check('二重に登録しない', count($syncRows()) === 1, (string) count($syncRows()));
+
+    $syncOrder->update_meta_data('_mk_creator_amount', 1720);
+    $syncOrder->save();
+    $syncOrder->update_status(MK\Order\Statuses::PAID, 'smoke');
+
+    $row = $syncRows()[0] ?? null;
+    check('状態がDokan側にも反映される', $row && $row->order_status === 'wc-mk-paid', (string) ($row->order_status ?? '-'));
+    check('クリエイターの受取額が入る', $row && (int) $row->net_amount === 1720, (string) ($row->net_amount ?? '-'));
+
+    check('既存注文の登録は重複しない', MK\Order\DokanSync::backfill() >= 0 && count($syncRows()) === 1);
+
+    MK\Schedule\Jobs::cancelDispatchOverdue($syncOrderId);
+    (new MK\Product\Reservation())->release($syncProductId);
+    $syncOrder->delete(true);
+    $wpdb->delete($wpdb->prefix . 'dokan_orders', ['order_id' => $syncOrderId], ['%d']);
+    wp_delete_post($syncProductId, true);
+    remove_filter('mk_should_notify', $muteSync, 99);
+
+    check('後始末：紐付けテストの注文と商品を削除',
+        !wc_get_order($syncOrderId) && !get_post($syncProductId) && count($syncRows()) === 0);
+}
+
+echo "\n=== メッセージ動画：種類と設定 ===\n";
+
+$defaults = MK\Product\MessageVideo::defaultTypes();
+check('種類は依頼どおり8種類', count($defaults) === 8, (string) count($defaults));
+check('1番目は誕生日メッセージ', $defaults[0]['label'] === '誕生日メッセージ');
+check('8番目はフリーメッセージ', $defaults[7]['label'] === 'フリーメッセージ');
+check('種類の一覧が保存されている', is_array(get_option(MK\Product\MessageVideo::OPTION_TYPES)));
+check('動画時間は3択', array_keys(MK\Product\MessageVideo::lengths()) === ['30s', '1m', '3m'],
+    implode(',', array_keys(MK\Product\MessageVideo::lengths())));
+check('送信期限は3日・7日・14日',
+    MK\Product\MessageVideo::deliveryDays('3') === 3
+        && MK\Product\MessageVideo::deliveryDays('7') === 7
+        && MK\Product\MessageVideo::deliveryDays('14') === 14);
+
+// 運営の一覧編集：種類は消さずに停止する。鍵は名前から作らない。
+$cleaned = MK\Product\MessageTypesAdmin::sanitise([
+    ['key' => 'birthday', 'label' => '誕生日メッセージ（改）', 'description' => '', 'active' => '1', 'order' => 1],
+    ['key' => '', 'label' => '卒業メッセージ', 'description' => '卒業おめでとう', 'active' => '1', 'order' => 2],
+]);
+$cleanedKeys = array_column($cleaned, 'key');
+
+check('名前を変えても鍵は変わらない', $cleaned[0]['key'] === 'birthday' && $cleaned[0]['label'] === '誕生日メッセージ（改）');
+check('新しい種類には新しい鍵', $cleaned[1]['key'] === 'custom_1', $cleaned[1]['key']);
+check('一覧から消えた種類は削除せず停止する',
+    in_array('cheer', $cleanedKeys, true)
+        && !array_values(array_filter($cleaned, static fn ($r): bool => $r['key'] === 'cheer'))[0]['active']);
+
+$videoSeller = get_user_by('login', 'mk_test_creator');
+$videoBuyer  = get_user_by('login', 'mk_test_buyer');
+
+if (!$videoSeller || !$videoBuyer) {
+    check('video fixtures', false, 'test creator or buyer missing');
+} else {
+    $muteVideo = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteVideo, 99);
+
+    $video = new WC_Product_Simple();
+    $video->set_name('mk smoke メッセージ動画');
+    $video->set_status('publish');
+    $video->set_regular_price('3000');
+    $video->save();
+
+    $videoId = $video->get_id();
+    wp_update_post(['ID' => $videoId, 'post_author' => $videoSeller->ID]);
+
+    update_post_meta($videoId, MK\Product\MessageVideo::META_KIND, MK\Product\MessageVideo::KIND);
+    update_post_meta($videoId, MK\Product\MessageVideo::META_TYPES, ['birthday', 'cheer', 'no_such_type']);
+    update_post_meta($videoId, MK\Product\MessageVideo::META_LENGTH, '30s');
+    update_post_meta($videoId, MK\Product\MessageVideo::META_DELIVERY, '3');
+
+    check('メッセージ動画だと分かる', MK\Product\MessageVideo::isMessageVideo($videoId));
+    check('対応する種類だけが出る（存在しない種類は無視）',
+        array_keys(MK\Product\MessageVideo::supportedTypes($videoId)) === ['birthday', 'cheer'],
+        implode(',', array_keys(MK\Product\MessageVideo::supportedTypes($videoId))));
+
+    // 運営が種類を停止したら、すべての出品から一斉に消える。
+    $retire = static function ($value) {
+        $rows = MK\Product\MessageVideo::defaultTypes();
+
+        foreach ($rows as &$row) {
+            if ($row['key'] === 'cheer') {
+                $row['active'] = false;
+            }
+        }
+
+        return $rows;
+    };
+    add_filter('pre_option_' . MK\Product\MessageVideo::OPTION_TYPES, $retire);
+    check('停止した種類は出品から消える',
+        array_keys(MK\Product\MessageVideo::supportedTypes($videoId)) === ['birthday']);
+    remove_filter('pre_option_' . MK\Product\MessageVideo::OPTION_TYPES, $retire);
+
+    // 一点物ではない。何人でも注文できる。
+    $videoLock = new MK\Product\Reservation();
+    check('1人目が注文しても', $videoLock->lock($videoId, 91001));
+    check('2人目も注文できる', $videoLock->lock($videoId, 91002));
+    check('売り切れにならない', get_post_status($videoId) === 'publish', (string) get_post_status($videoId));
+
+    echo "\n=== メッセージ動画：購入時のリクエスト ===\n";
+
+    $request = static function (array $post) use ($videoId): string {
+        try {
+            MK\Product\MessageVideo::validateRequest($videoId, $post);
+
+            return 'ok';
+        } catch (RuntimeException $e) {
+            return $e->getMessage();
+        }
+    };
+
+    check('種類を選ばないと購入できない',
+        $request(['mk_request_name' => 'さくら']) !== 'ok');
+    check('対応していない種類は選べない',
+        $request(['mk_message_type' => 'thanks', 'mk_request_name' => 'さくら']) !== 'ok');
+    check('お名前は必須',
+        $request(['mk_message_type' => 'birthday', 'mk_request_name' => '  ']) !== 'ok');
+    check('お名前は20文字まで',
+        $request(['mk_message_type' => 'birthday', 'mk_request_name' => str_repeat('あ', 21)]) !== 'ok');
+    check('20文字ちょうどは通る',
+        $request(['mk_message_type' => 'birthday', 'mk_request_name' => str_repeat('あ', 20)]) === 'ok');
+    check('内容は200文字まで',
+        $request(['mk_message_type' => 'birthday', 'mk_request_name' => 'さくら', 'mk_request_body' => str_repeat('い', 201)]) !== 'ok');
+    check('内容は任意',
+        $request(['mk_message_type' => 'birthday', 'mk_request_name' => 'さくら']) === 'ok');
+
+    $GLOBALS['product'] = wc_get_product($videoId);
+    wp_set_current_user($videoBuyer->ID);
+    ob_start(); MK\Checkout\Controller::renderBuyButton(); $buyForm = (string) ob_get_clean();
+    wp_set_current_user(0);
+    unset($GLOBALS['product']);
+
+    check('購入画面に種類の選択が出る', str_contains($buyForm, 'name="mk_message_type"'));
+    check('対応している種類だけが選べる',
+        str_contains($buyForm, '誕生日メッセージ') && !str_contains($buyForm, '感謝メッセージ'));
+    check('お名前欄は20文字制限', str_contains($buyForm, 'name="mk_request_name" id="mk_request_name" maxlength="20" required'));
+    check('再配布禁止を購入前に伝える', str_contains($buyForm, '再配布は禁止'));
+    check('動画にはオプションを出さない', !str_contains($buyForm, 'mk_options[]'));
+
+    echo "\n=== メッセージ動画：注文・送信・辞退 ===\n";
+
+    $videoOrder = (new MK\Checkout\OrderBuilder())->create(
+        wc_get_product($videoId),
+        $videoBuyer,
+        [],
+        MK\Product\MessageVideo::validateRequest($videoId, [
+            'mk_message_type' => 'birthday',
+            'mk_request_name' => 'さくら',
+            'mk_request_body' => '10歳の誕生日です',
+        ])
+    );
+    $videoOrderId = $videoOrder->get_id();
+
+    check('注文に種類が記録される',
+        $videoOrder->get_meta(MK\Product\MessageVideo::META_TYPE_LABEL) === '誕生日メッセージ');
+    check('注文にお名前が記録される',
+        $videoOrder->get_meta(MK\Product\MessageVideo::META_REQUEST_NAME) === 'さくら');
+    check('注文に内容が記録される',
+        $videoOrder->get_meta(MK\Product\MessageVideo::META_REQUEST_BODY) === '10歳の誕生日です');
+    check('送信期限が注文に記録される', MK\Order\DispatchDeadline::daysFor($videoOrder) === 3,
+        (string) MK\Order\DispatchDeadline::daysFor($videoOrder));
+    check('期限の表記は「送信」', MK\Order\DispatchDeadline::promiseLabel($videoOrder) === '3日以内に送信'
+        && MK\Order\DispatchDeadline::verb($videoOrder) === '送信');
+
+    $videoOrder->set_status(MK\Order\Statuses::PAID);
+    $videoOrder->save();
+    $videoOrder = wc_get_order($videoOrderId);
+
+    check('支払いで送信期限が始まる', MK\Order\DispatchDeadline::dueAt($videoOrder) !== '');
+
+    // 動画の注文に発送登録は出さない。
+    wp_set_current_user($videoSeller->ID);
+    ob_start(); MK\Order\Shipping::renderForm($videoOrder); $shipForm = (string) ob_get_clean();
+    ob_start(); MK\Order\VideoDelivery::renderForCreator($videoOrder); $creatorPanel = (string) ob_get_clean();
+    wp_set_current_user(0);
+
+    check('発送登録は出ない', $shipForm === '');
+    check('クリエイターに依頼内容が見える', str_contains($creatorPanel, 'さくら') && str_contains($creatorPanel, '10歳の誕生日です'));
+    check('動画の送信欄がある', str_contains($creatorPanel, 'name="mk_video_url"'));
+    check('辞退の欄がある', str_contains($creatorPanel, 'name="mk_decline_reason"'));
+
+    check('VimeoのURLは受け付ける',
+        MK\Order\VideoDelivery::normaliseUrl('https://vimeo.com/123456789/abcdef1234') !== '');
+    check('Vimeoのプレイヤー URLも受け付ける',
+        MK\Order\VideoDelivery::normaliseUrl('https://player.vimeo.com/video/123456789') !== '');
+    check('http は受け付けない',
+        MK\Order\VideoDelivery::normaliseUrl('http://vimeo.com/123456789') === '');
+    check('Vimeo以外は受け付けない',
+        MK\Order\VideoDelivery::normaliseUrl('https://www.youtube.com/watch?v=123456789') === '');
+    check('動画ではないVimeoのページは受け付けない',
+        MK\Order\VideoDelivery::normaliseUrl('https://vimeo.com/user123') === '');
+    check('偽装したドメインは受け付けない',
+        MK\Order\VideoDelivery::normaliseUrl('https://vimeo.com.evil.example/123456789') === '');
+
+    // 辞退：運営の確認待ちになり、期限切れ扱いにしない。
+    $declineReport = MK\Order\VideoDelivery::decline($videoOrder, $videoSeller->ID, '不適切な表現が含まれていたため');
+    $videoOrder = wc_get_order($videoOrderId);
+
+    check('辞退が記録される', MK\Order\VideoDelivery::isDeclined($videoOrder));
+    check('運営への申し出になる',
+        (new MK\Report\Service())->find($declineReport)->reason === MK\Order\VideoDelivery::REASON);
+    check('送金が保留される', $videoOrder->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
+    check('辞退は購入者の返品理由に入らない',
+        !isset(MK\Report\Service::returnGrounds()[MK\Order\VideoDelivery::REASON]));
+    check('辞退は出品者の責を既定にしない',
+        !MK\Report\Service::isSellerFault(MK\Order\VideoDelivery::REASON));
+
+    $videoOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT, gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS));
+    $videoOrder->save();
+    check('辞退中は期限切れにならない', !MK\Order\DispatchDeadline::isOverdue($videoOrder));
+
+    wp_set_current_user($videoBuyer->ID);
+    ob_start(); MK\Order\VideoDelivery::renderForBuyer($videoOrder); $buyerDeclined = (string) ob_get_clean();
+    ob_start(); MK\Report\Frontend::render($videoOrder); $buyerReportBox = (string) ob_get_clean();
+    wp_set_current_user(0);
+
+    check('購入者に辞退と返金の確認中を伝える', str_contains($buyerDeclined, '運営が内容を確認'));
+    check('購入者に「通報」の文言を出さない', !str_contains($buyerReportBox, '通報'));
+
+    // 運営が辞退を認めなかった場合：撮影を続ける。期限は再設定。
+    (new MK\Report\Service())->resolve($declineReport, 1, 'smoke: 撮影継続', true);
+    $videoOrder = wc_get_order($videoOrderId);
+
+    check('辞退を認めなければ撮影に戻る', !MK\Order\VideoDelivery::isDeclined($videoOrder));
+    check('期限は再設定される', !MK\Order\DispatchDeadline::isOverdue($videoOrder));
+
+    // 送信 → 購入者に動画と受取完了
+    $videoOrder->update_meta_data(MK\Order\VideoDelivery::META_URL, 'https://vimeo.com/123456789/abcdef1234');
+    $videoOrder->save();
+    $videoOrder->update_status(MK\Order\Statuses::SHIPPED, 'smoke');
+    $videoOrder = wc_get_order($videoOrderId);
+
+    wp_set_current_user($videoBuyer->ID);
+    ob_start(); MK\Order\VideoDelivery::renderForBuyer($videoOrder); $buyerSent = (string) ob_get_clean();
+    ob_start(); MK\Order\Receipt::render($videoOrder); $receiptPanel = (string) ob_get_clean();
+    wp_set_current_user(0);
+
+    check('購入者に動画のリンクが出る', str_contains($buyerSent, 'https://vimeo.com/123456789/abcdef1234'));
+    check('受取完了ボタンが出る', str_contains($buyerSent, '受取完了') && str_contains($buyerSent, 'mk_receive='));
+    check('再配布禁止を表示する', str_contains($buyerSent, '再配布は禁止'));
+    check('配送情報の欄は出さない', $receiptPanel === '');
+
+    // 他人には動画のURLを見せない。
+    ob_start(); MK\Order\VideoDelivery::renderForBuyer($videoOrder); $stranger = (string) ob_get_clean();
+    check('購入者以外には動画を見せない', $stranger === '');
+
+    MK\Schedule\Jobs::cancelDispatchOverdue($videoOrderId);
+    MK\Schedule\Jobs::cancelAutoComplete($videoOrderId);
+
+    global $wpdb;
+    $wpdb->delete($wpdb->prefix . 'mk_reports', ['id' => $declineReport], ['%d']);
+
+    $videoOrder->delete(true);
+    wp_delete_post($videoId, true);
+
+    remove_filter('mk_should_notify', $muteVideo, 99);
+
+    check('後始末：動画テストの注文と商品を削除', !wc_get_order($videoOrderId) && !get_post($videoId));
+}
+
 echo "\n=== 在庫のある商品（1点のみ / 複数） ===\n";
 
 $stockSeller = get_user_by('login', 'mk_test_creator');

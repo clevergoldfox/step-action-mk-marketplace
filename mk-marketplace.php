@@ -118,6 +118,8 @@ add_action('plugins_loaded', static function (): void {
     Order\Receipt::register();
     Order\DispatchDeadline::register();
     Order\CancelAdmin::register();
+    Order\VideoDelivery::register();
+    Order\DokanSync::register();
     Creator\Onboarding::register();
     Creator\ShopName::register();
     Creator\Search::register();
@@ -142,6 +144,8 @@ add_action('plugins_loaded', static function (): void {
     Product\ListingForm::register();
     Product\FormGuide::register();
     Product\Tags::register();
+    Product\MessageVideo::register();
+    Product\MessageTypesAdmin::register();
     Product\Details::register();
     Schedule\Jobs::register();
     Line\Links::register();

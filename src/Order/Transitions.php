@@ -56,9 +56,12 @@ final class Transitions
     {
         DispatchDeadline::start($order);
 
+        $verb = DispatchDeadline::verb($order);
+
         $order->add_order_note(sprintf(
-            'お支払いを確認しました。出品時の発送目安（%s）に基づき、発送期限を %s に設定しました。',
-            \MK\Product\Details::dispatchLabel((string) $order->get_meta(DispatchDeadline::META_DISPATCH)),
+            'お支払いを確認しました。出品時の%1$s目安（%2$s）に基づき、%1$s期限を %3$s に設定しました。',
+            $verb,
+            DispatchDeadline::promiseLabel($order),
             DispatchDeadline::dueLabel($order)
         ));
         $order->save();
@@ -75,7 +78,8 @@ final class Transitions
         $days = (int) get_option('mk_auto_complete_days', 7);
 
         $order->add_order_note(sprintf(
-            '発送が登録されました。%d日後に自動的に受取確認となります。',
+            '%sされました。%d日後に自動的に受取確認となります。',
+            DispatchDeadline::verb($order),
             $days
         ));
         $order->save();

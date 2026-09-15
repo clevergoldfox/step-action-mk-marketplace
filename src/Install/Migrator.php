@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 13;
+    public const SCHEMA_VERSION = 15;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -192,6 +192,14 @@ final class Migrator
         self::nameExistingShops();
         self::withdrawPricelessListings();
 
+        // Orders created before the checkout registered them with Dokan need
+        // their rows too -- but not from here. This runs on plugins_loaded,
+        // before WooCommerce's order data store exists, and calling
+        // wc_get_orders() at this point was a fatal error on EVERY request,
+        // front end included, until the next deploy. Flagged instead;
+        // DokanSync performs it on wp_loaded, when WooCommerce is ready.
+        update_option('mk_dokan_backfill_pending', 'yes', false);
+
         update_option(self::OPTION_VERSION, self::SCHEMA_VERSION);
     }
 
@@ -270,6 +278,10 @@ final class Migrator
         foreach ($defaults as $key => $value) {
             add_option($key, $value);
         }
+
+        // The operator's message-video types, seeded with the eight the client
+        // specified. add_option(): once the operator edits the list, it is theirs.
+        add_option(\MK\Product\MessageVideo::OPTION_TYPES, \MK\Product\MessageVideo::defaultTypes());
 
         // The creator counter. add_option() is a no-op if it already exists,
         // which is what protects previously issued numbers on reactivation.

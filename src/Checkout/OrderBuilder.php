@@ -5,6 +5,7 @@ namespace MK\Checkout;
 
 use MK\Order\DispatchDeadline;
 use MK\Product\Details;
+use MK\Product\MessageVideo;
 use MK\Product\Reservation;
 use MK\Stripe\AccountService;
 use MK\Support\Money;
@@ -49,7 +50,12 @@ final class OrderBuilder
      *
      * @throws RuntimeException if the item is gone or the creator cannot be paid.
      */
-    public function create(WC_Product $product, WP_User $buyer, array $optionGroupIds = []): WC_Order
+    public function create(
+        WC_Product $product,
+        WP_User $buyer,
+        array $optionGroupIds = [],
+        array $request = [],
+    ): WC_Order
     {
         $productId = $product->get_id();
         $creatorId = (int) get_post_field('post_author', $productId);
@@ -66,7 +72,7 @@ final class OrderBuilder
         }
 
         try {
-            return $this->build($product, $buyer, $creatorId, $optionGroupIds);
+            return $this->build($product, $buyer, $creatorId, $optionGroupIds, $request);
         } catch (\Throwable $e) {
             // Never leave an item locked because order creation failed.
             $this->reservation->release($productId);
@@ -81,6 +87,7 @@ final class OrderBuilder
         WP_User $buyer,
         int $creatorId,
         array $optionGroupIds,
+        array $request = [],
     ): WC_Order {
         $productAmount = (int) $product->get_price();
 
@@ -139,9 +146,20 @@ final class OrderBuilder
             $order->update_meta_data(Reservation::META_HOLDS_UNIT, 'yes');
         }
 
+        // A message video records what the buyer asked for, and swaps the
+        // parcel's dispatch promise for the listing's delivery promise.
+        if ($request !== [] && MessageVideo::isMessageVideo($product->get_id())) {
+            MessageVideo::snapshot($order, $product->get_id(), $request);
+        }
+
         $order->set_currency('JPY');
         $order->calculate_totals(false); // false: no tax recalculation
         $order->save();
+
+        // Without this row Dokan refuses the creator their own order, and every
+        // action they take on it -- 発送登録, 送信, 辞退 -- is unreachable.
+        // See Order\DokanSync.
+        \MK\Order\DokanSync::ensure($order);
 
         return $order;
     }

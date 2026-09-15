@@ -44,11 +44,31 @@ final class Receipt
             return;
         }
 
+        // A message video's panel, 受取完了 button included, is VideoDelivery's:
+        // a carrier and a tracking number have nothing to say about it.
+        if (\MK\Product\MessageVideo::isMessageVideoOrder($order)) {
+            return;
+        }
+
         self::renderShippingPanel($order);
 
         if ($status === Statuses::SHIPPED) {
             self::renderConfirmButton($order);
         }
+    }
+
+    /**
+     * Where a 受取確認 form posts, for any panel that offers the button.
+     *
+     * One handler for both kinds of order, so the rules protecting the payout
+     * -- buyer only, from 発送済 only, once -- live in exactly one place.
+     */
+    public static function confirmUrl(WC_Order $order): string
+    {
+        return wp_nonce_url(
+            add_query_arg('mk_receive', $order->get_id(), $order->get_view_order_url()),
+            self::NONCE
+        );
     }
 
     private static function renderShippingPanel(WC_Order $order): void

@@ -76,6 +76,11 @@ final class Shipping
             return;
         }
 
+        // A message video is handed over by URL, in VideoDelivery.
+        if (\MK\Product\MessageVideo::isMessageVideoOrder($order)) {
+            return;
+        }
+
         $status = $order->get_status();
 
         if ($status === Statuses::PAID) {
@@ -210,7 +215,11 @@ final class Shipping
         // Only from 購入済. Re-registering a shipment on an order that has
         // moved on would restart the auto-complete timer and, on a received
         // order, could re-queue a transfer that has already been scheduled.
-        if ($order->get_status() !== Statuses::PAID) {
+        // A video order registered as a parcel would reach 発送済 -- and start
+        // the clock towards payout -- with nothing having been sent.
+        if ($order->get_status() !== Statuses::PAID
+            || \MK\Product\MessageVideo::isMessageVideoOrder($order)
+        ) {
             wp_safe_redirect(dokan_get_navigation_url('orders'));
             exit;
         }
