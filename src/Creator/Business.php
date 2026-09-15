@@ -17,6 +17,9 @@ use WP_Error;
  *     application, which can take up to a week
  *   - an approved business is marked 「事業者」 where buyers can see it
  *
+ * And a follow-up (2026-09-18): a creator who registered before any of this
+ * existed can apply later, from the creator dashboard.
+ *
  * ---------------------------------------------------------------------------
  * Why a business is gated and an individual is not
  * ---------------------------------------------------------------------------
@@ -31,6 +34,17 @@ use WP_Error;
  * every other publication rule lives (wp_insert_post_data).
  *
  * ---------------------------------------------------------------------------
+ * A later application does not stop an existing shop
+ * ---------------------------------------------------------------------------
+ * An existing creator applying from the dashboard stays an individual until
+ * the operator approves: META_KIND changes on approval, not on application.
+ * The gate reads META_KIND, so their listings stay on sale during review.
+ * Holding them instead would unpublish a working shop, a week at a time, as
+ * the price of doing the right thing -- and the gate only fires when a
+ * listing is saved, so it would not even do that consistently. A rejected
+ * later application leaves them exactly where they were.
+ *
+ * ---------------------------------------------------------------------------
  * Licence images are never public
  * ---------------------------------------------------------------------------
  * A 古物商許可証 carries a name, an address and a permit number. Files go to a
@@ -42,6 +56,9 @@ use WP_Error;
  */
 final class Business
 {
+    /** Dokan dashboard sub-page slug. */
+    public const PAGE = 'mk-business-apply';
+
     public const META_KIND       = 'mk_seller_kind';
     public const META_STATUS     = 'mk_business_status';
     public const META_DATA       = 'mk_business_application';
@@ -49,6 +66,7 @@ final class Business
     public const META_APPLIED_AT = 'mk_business_applied_at';
     public const META_DECIDED_AT = 'mk_business_decided_at';
     public const META_DECISION   = 'mk_business_decision_note';
+    public const META_ROUTE      = 'mk_business_route';
 
     public const KIND_INDIVIDUAL = 'individual';
     public const KIND_BUSINESS   = 'business';
@@ -57,10 +75,17 @@ final class Business
     public const STATUS_APPROVED = 'approved';
     public const STATUS_REJECTED = 'rejected';
 
+    public const ROUTE_REGISTRATION = 'registration';
+    public const ROUTE_DASHBOARD    = 'dashboard';
+
     private const PRIVATE_SUBDIR = 'mk-private/business-licenses';
     private const MAX_BYTES      = 5 * 1024 * 1024;
+    private const NONCE_APPLY    = 'mk_business_apply';
 
     private static bool $rendered = false;
+
+    /** @var string[] problems with a dashboard application, shown on the same request */
+    private static array $applyErrors = [];
 
     public static function register(): void
     {
@@ -78,6 +103,12 @@ final class Business
         add_action('template_redirect', [self::class, 'guardMigration'], 1);
 
         add_action('dokan_new_seller_created', [self::class, 'save'], 20, 1);
+
+        // An existing creator applying later.
+        add_filter('dokan_query_var_filter', [self::class, 'addQueryVar']);
+        add_filter('dokan_get_dashboard_nav', [self::class, 'addNavItem']);
+        add_action('dokan_load_custom_template', [self::class, 'renderPage']);
+        add_action('template_redirect', [self::class, 'handleApplication']);
 
         add_filter('wp_insert_post_data', [self::class, 'gate'], 22, 2);
 
@@ -107,6 +138,12 @@ final class Business
         return (string) get_user_meta($userId, self::META_STATUS, true);
     }
 
+    /** Has this user ever applied, by either route? */
+    public static function hasApplication(int $userId): bool
+    {
+        return $userId > 0 && isset(self::statusLabels()[self::statusOf($userId)]);
+    }
+
     public static function isApproved(int $userId): bool
     {
         return self::isBusiness($userId) && self::statusOf($userId) === self::STATUS_APPROVED;
@@ -118,12 +155,30 @@ final class Business
         return !self::isBusiness($userId) || self::isApproved($userId);
     }
 
+    /** May this creator send an application from the dashboard now? */
+    public static function canApply(int $userId): bool
+    {
+        if ($userId === 0 || !function_exists('dokan_is_user_seller') || !dokan_is_user_seller($userId)) {
+            return false;
+        }
+
+        return !in_array(self::statusOf($userId), [self::STATUS_PENDING, self::STATUS_APPROVED], true);
+    }
+
     /** @return array<string, mixed> */
     public static function applicationOf(int $userId): array
     {
         $data = get_user_meta($userId, self::META_DATA, true);
 
         return is_array($data) ? $data : [];
+    }
+
+    /** Where the application came from, for the operator. */
+    public static function routeLabel(int $userId): string
+    {
+        return get_user_meta($userId, self::META_ROUTE, true) === self::ROUTE_DASHBOARD
+            ? '出品者登録後に申請（既存の出品者）'
+            : '出品者登録時に申請';
     }
 
     /** @return array<string, string> */
@@ -173,6 +228,7 @@ final class Business
         echo ' enctype="multipart/form-data"';
     }
 
+    /** The registration screens: individual or business, then the application. */
     public static function renderFields(): void
     {
         if (self::$rendered) {
@@ -181,15 +237,11 @@ final class Business
 
         self::$rendered = true;
 
-        $posted = static fn (string $key): string => isset($_POST['mk_business'][$key])
-            ? esc_attr(sanitize_text_field(wp_unslash((string) $_POST['mk_business'][$key])))
-            : '';
-
         $kind = isset($_POST['mk_seller_kind']) && $_POST['mk_seller_kind'] === self::KIND_BUSINESS
             ? self::KIND_BUSINESS
             : self::KIND_INDIVIDUAL;
 
-        echo '<div class="mk-seller-kind">';
+        echo '<div class="mk-seller-kind" data-mk-business>';
         echo '<p class="mk-seller-kind__title">出品者の区分<span class="required">*</span></p>';
 
         printf(
@@ -211,6 +263,20 @@ final class Business
         echo '<p class="mk-business-notice">事業者申請は、運営の審査後に承認となります。'
             . '<strong>申請から承認まで、最大1週間程度かかる場合があります。</strong>'
             . '承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。</p>';
+
+        self::renderApplicationInputs();
+
+        echo '</div></div>';
+
+        self::renderScript();
+    }
+
+    /** The application itself, shared by registration and the dashboard. */
+    private static function renderApplicationInputs(): void
+    {
+        $posted = static fn (string $key): string => isset($_POST['mk_business'][$key])
+            ? esc_attr(sanitize_text_field(wp_unslash((string) $_POST['mk_business'][$key])))
+            : '';
 
         $type = $posted('business_type');
 
@@ -276,34 +342,40 @@ final class Business
             . '<input type="file" name="mk_business_kobutsu_file" id="mk_business_kobutsu_file" accept="image/jpeg,image/png,application/pdf">'
             . '<small>JPEG・PNG・PDF、5MBまで。運営のみが確認し、公開されることはありません。</small></p>';
 
-        echo '</div></div></div>';
+        echo '</div>';
+    }
 
-        // Shows the business half only when chosen, the 古物商 block only when
-        // ticked, and makes the become-a-creator form able to carry a file.
+    /**
+     * Shows the business half only when chosen (where there is a choice), the
+     * 古物商 block only when ticked, and makes the enclosing form able to carry
+     * a file.
+     */
+    private static function renderScript(): void
+    {
         ?>
 <script>
 (function () {
-    var wrap = document.querySelector('.mk-seller-kind');
-    if (!wrap) { return; }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mk-business]'), function (wrap) {
+        var form = wrap.closest('form');
+        if (form) { form.enctype = 'multipart/form-data'; }
 
-    var form = wrap.closest('form');
-    if (form) { form.enctype = 'multipart/form-data'; }
+        var business = wrap.querySelector('.mk-business-fields');
+        var kobutsu = wrap.querySelector('.mk-business-kobutsu');
+        var needs = wrap.querySelector('input[name="mk_business[needs_kobutsu]"]');
+        var kinds = wrap.querySelectorAll('input[name="mk_seller_kind"]');
 
-    var business = wrap.querySelector('.mk-business-fields');
-    var kobutsu = wrap.querySelector('.mk-business-kobutsu');
-    var needs = wrap.querySelector('input[name="mk_business[needs_kobutsu]"]');
+        function sync() {
+            if (kinds.length) {
+                var chosen = wrap.querySelector('input[name="mk_seller_kind"]:checked');
+                business.hidden = !(chosen && chosen.value === 'business');
+            }
+            kobutsu.hidden = !(needs && needs.checked);
+        }
 
-    function sync() {
-        var chosen = wrap.querySelector('input[name="mk_seller_kind"]:checked');
-        business.hidden = !(chosen && chosen.value === 'business');
-        kobutsu.hidden = !(needs && needs.checked);
-    }
-
-    Array.prototype.forEach.call(wrap.querySelectorAll('input[name="mk_seller_kind"]'), function (r) {
-        r.addEventListener('change', sync);
+        Array.prototype.forEach.call(kinds, function (r) { r.addEventListener('change', sync); });
+        if (needs) { needs.addEventListener('change', sync); }
+        sync();
     });
-    if (needs) { needs.addEventListener('change', sync); }
-    sync();
 })();
 </script>
         <?php
@@ -453,7 +525,7 @@ final class Business
 
     // ------------------------------------------------------------------ save
 
-    /** Record the application once Dokan has made the user a creator. */
+    /** Record the choice made at registration, once Dokan has made the user a creator. */
     public static function save(int $userId): void
     {
         // Only from the two registration forms. Dokan fires this hook for
@@ -470,6 +542,25 @@ final class Business
             return;
         }
 
+        // A business from the start: held until approved.
+        update_user_meta($userId, self::META_KIND, self::KIND_BUSINESS);
+
+        self::recordApplication($userId, $post, $_FILES, true, self::ROUTE_REGISTRATION);
+    }
+
+    /**
+     * Store an application and put it in front of the operator.
+     *
+     * Does not touch META_KIND: whether the applicant is held meanwhile is the
+     * caller's decision (see the class comment). A new application replaces
+     * the previous one, licence file included.
+     *
+     * @param array<string, mixed> $post  the form, unslashed
+     * @param array<string, mixed> $files $_FILES, already validated
+     * @param bool                 $uploaded false lets tests supply a file they made
+     */
+    public static function recordApplication(int $userId, array $post, array $files, bool $uploaded, string $route): void
+    {
         $data  = is_array($post['mk_business'] ?? null) ? $post['mk_business'] : [];
         $clean = [
             'business_type' => isset(self::businessTypes()[(string) ($data['business_type'] ?? '')])
@@ -485,22 +576,210 @@ final class Business
             $clean[$key] = mb_substr(trim($value), 0, $max);
         }
 
-        update_user_meta($userId, self::META_KIND, self::KIND_BUSINESS);
         update_user_meta($userId, self::META_DATA, $clean);
         update_user_meta($userId, self::META_STATUS, self::STATUS_PENDING);
         update_user_meta($userId, self::META_APPLIED_AT, current_time('mysql', true));
+        update_user_meta($userId, self::META_ROUTE, $route === self::ROUTE_DASHBOARD ? self::ROUTE_DASHBOARD : self::ROUTE_REGISTRATION);
 
-        $file = $_FILES['mk_business_kobutsu_file'] ?? null;
+        $previous = self::licensePath($userId);
+        delete_user_meta($userId, self::META_LICENSE);
+
+        $file = $files['mk_business_kobutsu_file'] ?? null;
 
         if ($clean['needs_kobutsu'] && is_array($file) && (int) ($file['error'] ?? 1) === UPLOAD_ERR_OK) {
-            $stored = self::storeFile((string) $file['tmp_name'], (string) $file['name'], true);
+            $stored = self::storeFile((string) $file['tmp_name'], (string) $file['name'], $uploaded);
 
             if ($stored !== '') {
                 update_user_meta($userId, self::META_LICENSE, $stored);
             }
         }
 
+        // A permit that is no longer part of any application is not kept.
+        if ($previous !== '' && $previous !== self::licensePath($userId)) {
+            @unlink($previous);
+        }
+
         do_action('mk_business_applied', $userId);
+    }
+
+    // ------------------------------------------------------------- dashboard
+
+    /**
+     * @param array<string,string> $vars
+     * @return array<string,string>
+     */
+    public static function addQueryVar(array $vars): array
+    {
+        $vars[self::PAGE] = self::PAGE;
+
+        return $vars;
+    }
+
+    /**
+     * @param array<string,mixed> $nav
+     * @return array<string,mixed>
+     */
+    public static function addNavItem(array $nav): array
+    {
+        $nav[self::PAGE] = [
+            'title' => '事業者申請',
+            'icon'  => '<i class="fas fa-building"></i>',
+            'url'   => dokan_get_navigation_url(self::PAGE),
+            'pos'   => 56,
+        ];
+
+        return $nav;
+    }
+
+    /** Accept an application sent from the dashboard page. */
+    public static function handleApplication(): void
+    {
+        if (empty($_POST['mk_business_apply'])) {
+            return;
+        }
+
+        $userId = get_current_user_id();
+
+        if ($userId === 0 || !function_exists('dokan_is_user_seller') || !dokan_is_user_seller($userId)) {
+            return;
+        }
+
+        $nonce = sanitize_text_field(wp_unslash((string) ($_POST['_mk_business_nonce'] ?? '')));
+
+        if (!wp_verify_nonce($nonce, self::NONCE_APPLY)) {
+            self::$applyErrors = ['画面の有効期限が切れました。お手数ですが、もう一度送信してください。'];
+
+            return;
+        }
+
+        $page = dokan_get_navigation_url(self::PAGE);
+
+        // Already under review or approved: nothing to send. Back to the page,
+        // which says so.
+        if (!self::canApply($userId)) {
+            wp_safe_redirect($page);
+            exit;
+        }
+
+        $post                   = wp_unslash($_POST);
+        $post['mk_seller_kind'] = self::KIND_BUSINESS;
+
+        $errors = self::validationErrors($post, $_FILES);
+
+        if ($errors !== []) {
+            self::$applyErrors = $errors;   // the page renders later in this request, with the form refilled
+
+            return;
+        }
+
+        self::recordApplication($userId, $post, $_FILES, true, self::ROUTE_DASHBOARD);
+
+        wp_safe_redirect(add_query_arg('mk_applied', '1', $page));
+        exit;
+    }
+
+    /** @param array<string,mixed> $queryVars */
+    public static function renderPage(array $queryVars): void
+    {
+        if (!isset($queryVars[self::PAGE])) {
+            return;
+        }
+
+        $userId = get_current_user_id();
+
+        if ($userId === 0 || !function_exists('dokan_is_user_seller') || !dokan_is_user_seller($userId)) {
+            echo '<div class="dokan-error">この画面を表示する権限がありません。</div>';
+
+            return;
+        }
+
+        // Same wrapper handling as Onboarding::renderMarkup(), for the same reason.
+        echo '<article class="mk-business-page">';
+        echo '<header class="dokan-dashboard-header"><h1 class="entry-title">事業者申請</h1></header>';
+        echo '<div class="dokan-panel dokan-panel-default"><div class="dokan-panel-body">';
+
+        self::renderPageBody($userId);
+
+        echo '</div></div></article></div>';
+    }
+
+    /** What the dashboard page says, by the state of the creator's application. */
+    public static function renderPageBody(int $userId): void
+    {
+        if (isset($_GET['mk_applied'])) {
+            echo '<div class="dokan-alert dokan-alert-success">事業者申請を受け付けました。審査結果はメールでお知らせします。</div>';
+        }
+
+        $status = self::statusOf($userId);
+        $data   = self::applicationOf($userId);
+
+        if (self::isApproved($userId)) {
+            printf(
+                '<p>%s　<strong>%s</strong> として承認されています。</p>'
+                . '<p>ショップページのショップ名の横と、商品ページの出品者情報に「事業者」と表示されます。</p>'
+                . '<p class="description">登録内容の変更が必要な場合は、運営までお問い合わせください。</p>',
+                self::badgeHtml(),
+                esc_html((string) ($data['business_name'] ?? ''))
+            );
+
+            return;
+        }
+
+        if ($status === self::STATUS_PENDING) {
+            printf(
+                '<div class="dokan-alert dokan-alert-info"><strong>事業者申請を審査中です。</strong>（申請日：%s）<br>'
+                . '申請から承認まで、最大1週間程度かかる場合があります。承認されましたらメールでお知らせします。<br>%s</div>',
+                esc_html(get_date_from_gmt((string) get_user_meta($userId, self::META_APPLIED_AT, true), 'Y年n月j日')),
+                self::isBusiness($userId)
+                    ? '承認されるまで、商品は公開されません（下書きとして保存されます）。'
+                    : '審査中も、これまでどおり出品・販売を続けられます。'
+            );
+
+            return;
+        }
+
+        if ($status === self::STATUS_REJECTED) {
+            $note = trim((string) get_user_meta($userId, self::META_DECISION, true));
+
+            printf(
+                '<div class="dokan-alert dokan-alert-danger"><strong>前回の事業者申請は承認されませんでした。</strong><br>%s'
+                . '内容を見直して、下のフォームから再度申請できます。</div>',
+                $note !== '' ? '運営からの連絡：' . esc_html($note) . '<br>' : ''
+            );
+        }
+
+        echo '<p>法人・個人事業主として出品される場合は、事業者申請が必要です。'
+            . '運営の審査で承認されると、ショップページと商品ページに「事業者」と表示されます。</p>';
+
+        if (!self::isBusiness($userId)) {
+            echo '<p><strong>すでに出品中の商品は、審査中もこれまでどおり販売を続けられます。</strong></p>';
+        }
+
+        if (self::$applyErrors !== []) {
+            echo '<div class="dokan-alert dokan-alert-danger"><ul class="mk-business-errors">';
+
+            foreach (self::$applyErrors as $message) {
+                printf('<li>%s</li>', esc_html($message));
+            }
+
+            echo '</ul></div>';
+        }
+
+        echo '<form method="post" enctype="multipart/form-data" class="mk-business-apply-form">';
+        wp_nonce_field(self::NONCE_APPLY, '_mk_business_nonce');
+        echo '<input type="hidden" name="mk_business_apply" value="1">';
+
+        echo '<div class="mk-business-apply" data-mk-business><div class="mk-business-fields">';
+        echo '<p class="mk-business-notice"><strong>申請から承認まで、最大1週間程度かかる場合があります。</strong></p>';
+
+        self::renderApplicationInputs();
+
+        echo '</div></div>';
+
+        echo '<p><button type="submit" class="dokan-btn dokan-btn-theme">事業者申請を送信する</button></p>';
+        echo '</form>';
+
+        self::renderScript();
     }
 
     // --------------------------------------------------------------- storage
@@ -578,6 +857,12 @@ final class Business
     {
         $status = $approve ? self::STATUS_APPROVED : self::STATUS_REJECTED;
 
+        // Approval is what makes someone a business. A creator who applied
+        // later becomes one only here; one rejected stays as they were.
+        if ($approve) {
+            update_user_meta($userId, self::META_KIND, self::KIND_BUSINESS);
+        }
+
         update_user_meta($userId, self::META_STATUS, $status);
         update_user_meta($userId, self::META_DECIDED_AT, current_time('mysql', true));
         update_user_meta($userId, self::META_DECISION, $note);
@@ -632,8 +917,9 @@ final class Business
 
             printf(
                 '<div class="dokan-alert dokan-alert-danger"><strong>事業者申請は承認されませんでした。</strong><br>'
-                . '商品を公開することはできません。%s詳細は運営までお問い合わせください。</div>',
-                $note !== '' ? '運営からの連絡：' . esc_html($note) . '<br>' : ''
+                . '商品を公開することはできません。%s<a href="%s">事業者申請</a>から再度申請できます。</div>',
+                $note !== '' ? '運営からの連絡：' . esc_html($note) . '<br>' : '',
+                esc_url(dokan_get_navigation_url(self::PAGE))
             );
 
             return;

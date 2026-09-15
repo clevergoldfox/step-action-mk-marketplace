@@ -2925,6 +2925,85 @@ if (is_wp_error($bizSeller)) {
     check('後始末：事業者テストのユーザーと許可証を削除', !get_userdata($bizSeller) && !is_file(MK\Creator\Business::privateDir() . '/' . $stored));
 }
 
+echo "\n=== 既存の出品者による後からの事業者申請 ===\n";
+
+$lateSeller = wp_insert_user(['user_login' => 'mk_smoke_late_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($lateSeller)) {
+    check('late business fixture', false, $lateSeller->get_error_message());
+} else {
+    $muteLate = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteLate, 99);
+
+    $B = MK\Creator\Business::class;
+    update_user_meta($lateSeller, $B::META_KIND, $B::KIND_INDIVIDUAL);
+
+    $latePublish = static fn (): string => $B::gate(
+        ['post_type' => 'product', 'post_status' => 'publish', 'post_author' => $lateSeller], []
+    )['post_status'];
+
+    $latePage = static function () use ($B, $lateSeller): string {
+        ob_start();
+        $B::renderPageBody($lateSeller);
+
+        return (string) ob_get_clean();
+    };
+
+    $lateFile = tempnam(sys_get_temp_dir(), 'mkl');
+    copy($png, $lateFile);
+
+    $latePost = ['mk_seller_kind' => $B::KIND_BUSINESS, 'mk_business' => [
+        'business_type' => 'sole_proprietor', 'business_name' => '古着屋スモーク', 'representative' => '山田花子',
+        'address' => '東京都千代田区', 'phone' => '0300000000', 'email' => 'smoke-late@example.com',
+        'products' => '古着', 'needs_kobutsu' => '1', 'kobutsu_number' => '第1号', 'kobutsu_authority' => '東京都公安委員会',
+    ]];
+    $lateFiles = ['mk_business_kobutsu_file' => [
+        'name' => 'license.png', 'tmp_name' => $lateFile, 'size' => (int) filesize($lateFile), 'error' => UPLOAD_ERR_OK,
+    ]];
+
+    check('ダッシュボードに「事業者申請」メニュー', isset($B::addNavItem([])[$B::PAGE]));
+    check('既存の出品者は後から申請できる', $B::canApply($lateSeller) && !$B::hasApplication($lateSeller));
+    check('申請前の画面に申請フォーム', str_contains($latePage(), 'name="mk_business[representative]"')
+        && str_contains($latePage(), '審査中もこれまでどおり販売を続けられます'));
+    check('後からの申請も登録時と同じ基準で確認する', $B::validationErrors($latePost, $lateFiles) === []);
+
+    $B::recordApplication($lateSeller, $latePost, $lateFiles, false, $B::ROUTE_DASHBOARD);
+
+    check('後からの申請は審査中になる', $B::statusOf($lateSeller) === $B::STATUS_PENDING && $B::hasApplication($lateSeller));
+    check('審査中も個人のまま出品を続けられる', !$B::isBusiness($lateSeller) && $latePublish() === 'publish');
+    check('審査中はバッジを出さない', !$B::isApproved($lateSeller));
+    check('審査中は重ねて申請できない', !$B::canApply($lateSeller));
+    check('申請経路を運営に示す', str_contains($B::routeLabel($lateSeller), '既存の出品者'));
+    check('審査中の画面は販売継続を伝える', str_contains($latePage(), '審査中も、これまでどおり出品・販売を続けられます')
+        && !str_contains($latePage(), 'name="mk_business[representative]"'));
+
+    $firstLicense = $B::licensePath($lateSeller);
+    check('後からの申請でも許可証を保管する', $firstLicense !== '');
+
+    $B::decide($lateSeller, false, 'スモーク', 1);
+    check('承認しなければ個人のまま出品できる', !$B::isBusiness($lateSeller) && $latePublish() === 'publish');
+    check('承認されなかった後は再申請できる', $B::canApply($lateSeller) && str_contains($latePage(), '前回の事業者申請は承認されませんでした')
+        && str_contains($latePage(), 'スモーク'));
+
+    $latePost['mk_business']['needs_kobutsu'] = '';
+    $B::recordApplication($lateSeller, $latePost, [], false, $B::ROUTE_DASHBOARD);
+    check('許可証なしで再申請すると古い許可証は残さない', $B::licensePath($lateSeller) === '' && !is_file($firstLicense));
+
+    $B::decide($lateSeller, true, '', 1);
+    ob_start(); $B::renderStoreBadge($lateSeller); $lateBadge = (string) ob_get_clean();
+    check('承認で事業者に切り替わり、バッジが出る', $B::isApproved($lateSeller) && str_contains($lateBadge, '事業者'));
+    check('承認後も出品できる', $latePublish() === 'publish');
+    check('承認後の画面は承認済みを示す', str_contains($latePage(), 'として承認されています') && !$B::canApply($lateSeller));
+
+    @unlink($lateFile);
+    remove_filter('mk_should_notify', $muteLate, 99);
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($lateSeller);
+    check('後始末：後からの申請テストのユーザーを削除', !get_userdata($lateSeller));
+}
+
 @unlink($png);
 
 echo "\n=== 返金の負担はクリエイター側の事情で決まる ===\n";
@@ -2964,6 +3043,7 @@ if (!$costCreator) {
     $plainBox = $renderBox($plain);
     check('選べる画面には3つの結果', str_contains($plainBox, '①クリエイターの責任')
         && str_contains($plainBox, '②購入者の責任') && str_contains($plainBox, '③責任が明確でない'));
+    check('不適切な依頼は原則②と案内する', str_contains($plainBox, '不適切な依頼 → 原則②'));
     check('購入者の責任も選べる', MK\Order\CancelAdmin::costBearer($plain, 'buyer') === 'buyer');
     check('不明な値は運営負担', MK\Order\CancelAdmin::costBearer($plain, 'bogus') === 'platform');
 
@@ -3015,6 +3095,22 @@ if (!$costCreator) {
     $declined->save();
     check('クリエイター都合の申告ならクリエイター負担を先に示す',
         MK\Order\CancelAdmin::recommendedBearer(wc_get_order($declined->get_id())) === 'creator');
+    check('クリエイター都合の辞退は運営が選んでもクリエイター負担',
+        MK\Order\CancelAdmin::costBearer(wc_get_order($declined->get_id()), 'platform') === 'creator'
+        && MK\Order\CancelAdmin::costBearer(wc_get_order($declined->get_id()), 'buyer') === 'creator');
+    check('クリエイター都合の辞退では①だけを出す', !str_contains($renderBox(wc_get_order($declined->get_id())), '③責任が明確でない'));
+
+    $declined->update_meta_data(MK\Order\VideoDelivery::META_DECLINE_KIND, 'buyer_request');
+    $declined->save();
+    check('不適切な依頼でも運営判断で③にできる',
+        MK\Order\CancelAdmin::costBearer(wc_get_order($declined->get_id()), 'platform') === 'platform');
+
+    $declined->update_meta_data(MK\Stripe\TransferService::META_TRANSFER_ID, 'tr_smoke');
+    $declined->save();
+    check('送金後の不適切な依頼は③を先に示す（②は選べないため）',
+        MK\Order\CancelAdmin::recommendedBearer(wc_get_order($declined->get_id())) === 'platform');
+    $declined->delete_meta_data(MK\Stripe\TransferService::META_TRANSFER_ID);
+    $declined->save();
 
     global $wpdb;
 

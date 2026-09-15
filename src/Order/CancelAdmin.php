@@ -36,11 +36,16 @@ use WC_Order;
  *   ③ neither clearly            the operator finds who bears them
  *
  * Where the grounds themselves are on the creator's side -- a missed deadline,
- * a listing that does not match the item -- ① is not a choice: the form offers
- * only it, and costBearer() enforces it on submit. Everything else, a declined
- * message video included, is the operator's finding, because the ground alone
- * cannot say whether a creator refused an abusive request or simply lost
- * interest.
+ * a listing that does not match the item, a creator declining a video for
+ * their own reasons -- ① is not a choice: the form offers only it, and
+ * costBearer() enforces it on submit. Everything else is the operator's
+ * finding.
+ *
+ * An inappropriate request is ② as a rule, and ③ where the operator finds the
+ * buyer's responsibility hard to establish (2026-09-18). So a creator who
+ * declines a video as an inappropriate request gets ② suggested, not imposed:
+ * that is the creator's claim about the buyer, and the operator is the one who
+ * weighs it.
  */
 final class CancelAdmin
 {
@@ -173,7 +178,11 @@ final class CancelAdmin
 
         echo '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
             . '<strong>返金にかかる費用の負担</strong><br>'
-            . '内容を確認のうえ、責任の所在に応じて選んでください。</p>';
+            . '内容を確認のうえ、責任の所在に応じて選んでください。</p>'
+            . '<ul style="margin:0 0 8px 1.2em;list-style:disc">'
+            . '<li>クリエイター側の都合・原因 → ①</li>'
+            . '<li>不適切な依頼 → 原則②（購入者の責任と判断しにくい場合は③）</li>'
+            . '</ul>';
 
         if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && VideoDelivery::isDeclined($order)) {
             $kinds = VideoDelivery::declineKinds();
@@ -357,8 +366,12 @@ final class CancelAdmin
     public static function recommendedBearer(WC_Order $order): string
     {
         if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && VideoDelivery::isDeclined($order)) {
+            $paidOut = $order->get_meta(TransferService::META_TRANSFER_ID) !== '';
+
             return match ((string) $order->get_meta(VideoDelivery::META_DECLINE_KIND)) {
-                'buyer_request' => 'buyer',
+                // ② cannot be carried out once the creator has been paid; ③ is
+                // what remains for a buyer-side case.
+                'buyer_request' => $paidOut ? 'platform' : 'buyer',
                 'creator'       => 'creator',
                 default         => 'platform',
             };
@@ -399,6 +412,15 @@ final class CancelAdmin
 
         if ((string) $order->get_meta(DispatchDeadline::META_OVERDUE_AT) !== '') {
             $labels[] = DispatchDeadline::verb($order) . '期限の超過';
+        }
+
+        // The creator's own word that the decline was their convenience.
+        // Unlike a claim about the buyer, there is nothing for the operator to weigh.
+        if (\MK\Product\MessageVideo::isMessageVideoOrder($order)
+            && VideoDelivery::isDeclined($order)
+            && (string) $order->get_meta(VideoDelivery::META_DECLINE_KIND) === 'creator'
+        ) {
+            $labels[] = 'クリエイターの都合による辞退';
         }
 
         return array_values(array_unique($labels));

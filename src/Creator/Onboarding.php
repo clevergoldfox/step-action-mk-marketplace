@@ -99,13 +99,22 @@ final class Onboarding
         }
 
         $rules   = (array) get_option('rewrite_rules');
-        $present = false;
+        $present = true;
 
-        foreach ($rules as $target) {
-            if (is_string($target) && str_contains($target, self::PAGE)) {
-                $present = true;
-                break;
+        // Every dashboard page this plugin adds, not just this one: a page
+        // added later would otherwise never be flushed, because the version
+        // stamp does not change between deploys.
+        foreach ([self::PAGE, Business::PAGE] as $page) {
+            $found = false;
+
+            foreach ($rules as $target) {
+                if (is_string($target) && str_contains($target, $page)) {
+                    $found = true;
+                    break;
+                }
             }
+
+            $present = $present && $found;
         }
 
         if ($present && get_option(self::OPTION_REWRITES) === MK_VERSION) {

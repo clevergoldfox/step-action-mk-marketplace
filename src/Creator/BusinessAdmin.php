@@ -62,7 +62,7 @@ final class BusinessAdmin
             echo '<div class="notice notice-success is-dismissible"><p>審査結果を保存し、申請者に通知しました。</p></div>';
         }
 
-        if ($userId > 0 && Business::isBusiness($userId)) {
+        if ($userId > 0 && Business::hasApplication($userId)) {
             self::renderDetail($userId);
         } else {
             self::renderList();
@@ -80,8 +80,10 @@ final class BusinessAdmin
             $status = Business::STATUS_PENDING;
         }
 
-        echo '<p>法人・個人事業主として出品する方の申請です。<strong>承認されるまで、その出品者は商品を公開できません。</strong>'
-            . '申請画面では「最大1週間程度」とご案内しています。</p>';
+        echo '<p>法人・個人事業主として出品する方の申請です。申請画面では「最大1週間程度」とご案内しています。<br>'
+            . '<strong>出品者登録時の申請</strong>：承認されるまで、その出品者は商品を公開できません。<br>'
+            . '<strong>登録後の申請（既存の出品者）</strong>：審査中も個人として出品を続けられます。承認すると事業者に切り替わります。'
+            . '承認しない場合は個人のままです。</p>';
 
         echo '<ul class="subsubsub">';
 
@@ -150,6 +152,9 @@ final class BusinessAdmin
         $rows = [
             '申請者アカウント' => $user ? $user->display_name . '（' . $user->user_email . '）' : '#' . $userId,
             '申請日'           => get_date_from_gmt((string) get_user_meta($userId, Business::META_APPLIED_AT, true), 'Y-m-d H:i'),
+            '申請経路'         => Business::routeLabel($userId) . (Business::isBusiness($userId)
+                ? (Business::isApproved($userId) ? '' : '／承認されるまで商品を公開できません')
+                : '／審査中も個人として出品を継続中'),
             '事業者区分'       => $types[$data['business_type'] ?? ''] ?? '—',
         ];
 
@@ -215,7 +220,7 @@ final class BusinessAdmin
         $decision = isset($_POST['decision']) ? sanitize_key(wp_unslash($_POST['decision'])) : '';
         $note     = isset($_POST['note']) ? sanitize_textarea_field(wp_unslash($_POST['note'])) : '';
 
-        if ($userId > 0 && Business::isBusiness($userId) && in_array($decision, ['approve', 'reject'], true)) {
+        if ($userId > 0 && Business::hasApplication($userId) && in_array($decision, ['approve', 'reject'], true)) {
             Business::decide($userId, $decision === 'approve', $note, get_current_user_id());
         }
 

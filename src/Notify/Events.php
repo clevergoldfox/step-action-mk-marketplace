@@ -531,15 +531,22 @@ final class Events
         $data = \MK\Creator\Business::applicationOf($userId);
         $name = (string) ($data['business_name'] ?? '');
 
+        // A creator who applied later keeps selling during review; one who
+        // applied at registration cannot publish until approved.
+        $held = !\MK\Creator\Business::canPublish($userId);
+
         foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
             Dispatcher::send(new Notification(
                 type: 'business.applied.admin',
                 userId: (int) $adminId,
                 subject: '事業者申請が届きました',
                 body: sprintf(
-                    "事業者申請が届きました。\n\n法人名・屋号：%s\n\n"
-                    . "承認されるまで、この出品者は商品を公開できません。管理画面から審査してください。",
-                    $name
+                    "事業者申請が届きました。\n\n法人名・屋号：%s\n申請経路：%s\n\n%s管理画面から審査してください。",
+                    $name,
+                    \MK\Creator\Business::routeLabel($userId),
+                    $held
+                        ? "承認されるまで、この出品者は商品を公開できません。"
+                        : "既存の出品者のため、審査中も個人としての出品は続いています。"
                 ),
                 short: sprintf('事業者申請：%s', $name),
                 url: admin_url('admin.php?page=mk-business&user=' . $userId),
@@ -553,9 +560,11 @@ final class Events
             subject: '事業者申請を受け付けました',
             body: "事業者申請を受け付けました。\n\n"
                 . "運営が内容を確認し、審査結果をメールでお知らせします。申請から承認まで、最大1週間程度かかる場合があります。\n"
-                . "承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。",
+                . ($held
+                    ? "承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。"
+                    : "審査中も、これまでどおり出品・販売を続けられます。"),
             short: '事業者申請を受け付けました。',
-            url: dokan_get_navigation_url(),
+            url: dokan_get_navigation_url(\MK\Creator\Business::PAGE),
             context: ['user_id' => $userId],
         ));
     }
@@ -569,13 +578,18 @@ final class Events
             userId: $userId,
             subject: $approved ? '事業者申請が承認されました' : '事業者申請の審査結果について',
             body: $approved
-                ? "事業者申請が承認されました。\n\n商品を公開できるようになりました。ショップページには「事業者」と表示されます。"
+                ? "事業者申請が承認されました。\n\n事業者として商品を公開・販売できます。"
+                    . "ショップページのショップ名の横と、商品ページの出品者情報に「事業者」と表示されます。"
                     . ($note !== '' ? "\n\n運営からの連絡：" . $note : '')
                 : "誠に恐れ入りますが、今回の事業者申請は承認されませんでした。\n\n"
                     . ($note !== '' ? "理由：" . $note . "\n\n" : '')
+                    . (\MK\Creator\Business::canPublish($userId)
+                        ? "個人の出品者としての出品・販売は、これまでどおり続けられます。\n"
+                        : '')
+                    . "内容を見直して、ダッシュボードの「事業者申請」から再度申請できます。"
                     . "ご不明な点がございましたら、運営までお問い合わせください。",
             short: $approved ? '事業者申請が承認されました。' : '事業者申請は承認されませんでした。',
-            url: dokan_get_navigation_url(),
+            url: dokan_get_navigation_url(\MK\Creator\Business::PAGE),
             context: ['user_id' => $userId],
         ));
     }
