@@ -35,6 +35,8 @@ final class Events
         add_action('mk_creator_charged', [self::class, 'onCreatorCharged'], 10, 3);
         add_action('mk_video_declined', [self::class, 'onVideoDeclined'], 10, 2);
         add_action('mk_video_decline_rejected', [self::class, 'onDeclineRejected'], 10, 2);
+        add_action('mk_business_applied', [self::class, 'onBusinessApplied'], 10, 1);
+        add_action('mk_business_decided', [self::class, 'onBusinessDecided'], 10, 4);
         add_action('mk_transfer_sent', [self::class, 'onTransferSent'], 10, 3);
         add_action('transition_post_status', [self::class, 'onListingStatus'], 10, 3);
     }
@@ -466,7 +468,7 @@ final class Events
             subject: 'メッセージ動画のリクエストについてのお知らせ',
             body: sprintf(
                 "ご注文 #%d について、クリエイターから今回のリクエストをお受けできないとの連絡がありました。\n\n"
-                . "運営が内容を確認のうえ、ご返金の手続きを行います。結果はあらためてメールでお知らせします。\n"
+                . "運営が内容を確認のうえ、対応を決定いたします。結果はあらためてメールでお知らせします。\n"
                 . "お支払いいただいた代金は、クリエイターへはお渡ししておりません。",
                 $orderId
             ),
@@ -518,6 +520,63 @@ final class Events
             short: sprintf('注文 #%d の動画は撮影されることになりました。', $orderId),
             url: $order->get_view_order_url(),
             context: ['order_id' => $orderId],
+        ));
+    }
+
+    // --------------------------------------------------- business applications
+
+    /** A business applied: the operator must review it, the applicant is told it arrived. */
+    public static function onBusinessApplied(int $userId): void
+    {
+        $data = \MK\Creator\Business::applicationOf($userId);
+        $name = (string) ($data['business_name'] ?? '');
+
+        foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
+            Dispatcher::send(new Notification(
+                type: 'business.applied.admin',
+                userId: (int) $adminId,
+                subject: '事業者申請が届きました',
+                body: sprintf(
+                    "事業者申請が届きました。\n\n法人名・屋号：%s\n\n"
+                    . "承認されるまで、この出品者は商品を公開できません。管理画面から審査してください。",
+                    $name
+                ),
+                short: sprintf('事業者申請：%s', $name),
+                url: admin_url('admin.php?page=mk-business&user=' . $userId),
+                context: ['user_id' => $userId],
+            ));
+        }
+
+        Dispatcher::send(new Notification(
+            type: 'business.applied.applicant',
+            userId: $userId,
+            subject: '事業者申請を受け付けました',
+            body: "事業者申請を受け付けました。\n\n"
+                . "運営が内容を確認し、審査結果をメールでお知らせします。申請から承認まで、最大1週間程度かかる場合があります。\n"
+                . "承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。",
+            short: '事業者申請を受け付けました。',
+            url: dokan_get_navigation_url(),
+            context: ['user_id' => $userId],
+        ));
+    }
+
+    public static function onBusinessDecided(int $userId, string $status, string $note, int $adminId): void
+    {
+        $approved = $status === \MK\Creator\Business::STATUS_APPROVED;
+
+        Dispatcher::send(new Notification(
+            type: $approved ? 'business.approved' : 'business.rejected',
+            userId: $userId,
+            subject: $approved ? '事業者申請が承認されました' : '事業者申請の審査結果について',
+            body: $approved
+                ? "事業者申請が承認されました。\n\n商品を公開できるようになりました。ショップページには「事業者」と表示されます。"
+                    . ($note !== '' ? "\n\n運営からの連絡：" . $note : '')
+                : "誠に恐れ入りますが、今回の事業者申請は承認されませんでした。\n\n"
+                    . ($note !== '' ? "理由：" . $note . "\n\n" : '')
+                    . "ご不明な点がございましたら、運営までお問い合わせください。",
+            short: $approved ? '事業者申請が承認されました。' : '事業者申請は承認されませんでした。',
+            url: dokan_get_navigation_url(),
+            context: ['user_id' => $userId],
         ));
     }
 

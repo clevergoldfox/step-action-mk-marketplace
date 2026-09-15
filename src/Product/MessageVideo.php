@@ -56,6 +56,9 @@ final class MessageVideo
     public const META_REQUEST_NAME = '_mk_request_name';
     public const META_REQUEST_BODY = '_mk_request_body';
 
+    /** When the buyer ticked the cautions before writing the request. */
+    public const META_REQUEST_AGREED_AT = '_mk_request_agreed_at';
+
     /** The operator's list of message types. */
     public const OPTION_TYPES = 'mk_message_types';
 
@@ -403,7 +406,36 @@ final class MessageVideo
 
     // -------------------------------------------------------------- buying
 
-    /** The request part of the buy form. */
+    /**
+     * The client's cautions, verbatim, shown immediately before the request.
+     *
+     * @return string[]
+     */
+    public static function cautions(): array
+    {
+        return [
+            '性的・成人向けの内容',
+            '暴力、脅迫、差別、誹謗中傷等',
+            '犯罪行為を助長・誘発する内容',
+            '他人への嫌がらせを目的とする内容',
+            '個人情報や第三者の権利を侵害する内容',
+            '第三者への無断での共有・転載・拡散を前提とした内容',
+            'その他、公序良俗に反する内容',
+        ];
+    }
+
+    /**
+     * The request part of the buy form.
+     *
+     * The cautions come FIRST, and the request fields stay locked until the
+     * buyer ticks that they have read them. The client's point: agreeing to a
+     * long document at sign-up is not the same as seeing the rules at the
+     * moment of typing a request, and the moment of typing is when an
+     * inappropriate one gets written.
+     *
+     * Locked in the browser for the experience, and enforced on the server by
+     * validateRequest(), because a disabled attribute is not a rule.
+     */
     public static function renderBuyFields(int $productId): string
     {
         $types = self::supportedTypes($productId);
@@ -413,12 +445,32 @@ final class MessageVideo
         }
 
         $html  = '<div class="mk-video-request">';
+
+        $html .= '<div class="mk-video-caution">';
+        $html .= '<p class="mk-video-caution__title">ご依頼前に必ずご確認ください</p>';
+        $html .= '<p class="mk-video-caution__lead">次のような内容のご依頼はできません。</p><ul>';
+
+        foreach (self::cautions() as $caution) {
+            $html .= '<li>' . esc_html($caution) . '</li>';
+        }
+
+        $html .= '</ul>';
+        $html .= '<p class="mk-video-caution__body">不適切な依頼は禁止されており、該当する場合はクリエイターが依頼を辞退し、'
+            . 'キャンセル・返金となる場合があります。また、購入した動画やその他のデジタルコンテンツを、'
+            . 'クリエイターの許可なく第三者へ共有、転載、複製、配布、公開、SNS等へ投稿・拡散する行為は禁止されています。'
+            . '内容や方法によっては、著作権、肖像、プライバシーその他の権利を侵害し、法令に抵触する可能性があります。</p>';
+
+        $html .= '<label class="mk-video-caution__agree"><input type="checkbox" name="mk_request_agree" id="mk_request_agree" value="1" required> '
+            . '上記の注意事項を確認し、不適切な依頼や、購入したコンテンツの無断での共有・転載・拡散を行わないことに同意します。</label>';
+        $html .= '</div>';
+
+        $html .= '<fieldset class="mk-video-request__fields">';
         $html .= '<p class="mk-video-request__title">メッセージの種類を選んでください<span class="required">*</span></p>';
         $html .= '<ul class="mk-video-request__types">';
 
         foreach ($types as $key => $type) {
             $html .= sprintf(
-                '<li><label><input type="radio" name="mk_message_type" value="%s" required> '
+                '<li><label><input type="radio" name="mk_message_type" value="%s" required disabled data-mk-requires-agree> '
                 . '<strong>%s</strong><small>%s</small></label></li>',
                 esc_attr($key),
                 esc_html($type['label']),
@@ -430,7 +482,7 @@ final class MessageVideo
 
         $html .= sprintf(
             '<p><label for="mk_request_name">呼んでほしいお名前<span class="required">*</span></label>'
-            . '<input type="text" name="mk_request_name" id="mk_request_name" maxlength="%1$d" required '
+            . '<input type="text" name="mk_request_name" id="mk_request_name" maxlength="%1$d" required disabled data-mk-requires-agree '
             . 'placeholder="例：さくらちゃん">'
             . '<small>%1$d文字まで</small></p>',
             self::NAME_MAX
@@ -438,17 +490,29 @@ final class MessageVideo
 
         $html .= sprintf(
             '<p><label for="mk_request_body">メッセージに入れてほしい内容（任意）</label>'
-            . '<textarea name="mk_request_body" id="mk_request_body" rows="4" maxlength="%1$d" '
+            . '<textarea name="mk_request_body" id="mk_request_body" rows="4" maxlength="%1$d" disabled data-mk-requires-agree '
             . 'placeholder="例：来週の試験、がんばってと伝えてほしいです"></textarea>'
             . '<small>%1$d文字まで</small></p>',
             self::BODY_MAX
         );
 
-        $html .= '<p class="mk-video-request__note">動画はクリエイターが撮影後、取引画面からお届けします。'
-            . '依頼内容によっては、クリエイターがお受けできない場合があります（その場合は運営が確認のうえ全額返金いたします）。<br>'
-            . '<strong>お届けした動画のURLの第三者への共有・転載・再配布は禁止</strong>です。</p>';
+        $html .= '<p class="mk-video-request__locked">上の注意事項に同意すると、ご依頼内容を入力できます。</p>';
+        $html .= '</fieldset>';
+
+        $html .= '<p class="mk-video-request__note">動画はクリエイターが撮影後、取引画面からお届けします。</p>';
 
         $html .= '</div>';
+
+        // Disabled fields are not submitted and do not validate, so they are
+        // unlocked on the tick rather than merely made to look active.
+        $html .= '<script>(function(){'
+            . 'var box=document.getElementById("mk_request_agree");if(!box){return;}'
+            . 'var fields=document.querySelectorAll("[data-mk-requires-agree]");'
+            . 'var note=document.querySelector(".mk-video-request__locked");'
+            . 'function sync(){Array.prototype.forEach.call(fields,function(f){f.disabled=!box.checked;});'
+            . 'if(note){note.hidden=box.checked;}}'
+            . 'box.addEventListener("change",sync);sync();'
+            . '})();</script>';
 
         return $html;
     }
@@ -466,6 +530,12 @@ final class MessageVideo
      */
     public static function validateRequest(int $productId, array $post): array
     {
+        // First, and on the server: the fields are locked in the browser until
+        // this is ticked, but a locked field is not a rule.
+        if (empty($post['mk_request_agree'])) {
+            throw new RuntimeException('ご依頼前の注意事項をご確認のうえ、同意のチェックを入れてください。');
+        }
+
         $types = self::supportedTypes($productId);
         $type  = isset($post['mk_message_type']) ? sanitize_key(wp_unslash((string) $post['mk_message_type'])) : '';
 
@@ -513,6 +583,11 @@ final class MessageVideo
         $order->update_meta_data(self::META_TYPE_LABEL, $request['label']);
         $order->update_meta_data(self::META_REQUEST_NAME, $request['name']);
         $order->update_meta_data(self::META_REQUEST_BODY, $request['body']);
+
+        // validateRequest() refuses a request without the agreement, so reaching
+        // here means it was given. Kept with the time, because a dispute about
+        // an inappropriate request turns on whether the buyer saw the rules.
+        $order->update_meta_data(self::META_REQUEST_AGREED_AT, gmdate('Y-m-d H:i:s'));
         $order->update_meta_data(self::META_LENGTH, self::lengthOf($productId));
 
         // The delivery promise goes where the dispatch promise goes, so the

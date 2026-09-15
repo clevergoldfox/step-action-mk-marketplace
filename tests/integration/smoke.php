@@ -2142,7 +2142,7 @@ if (!$videoSeller || !$videoBuyer) {
 
     $request = static function (array $post) use ($videoId): string {
         try {
-            MK\Product\MessageVideo::validateRequest($videoId, $post);
+            MK\Product\MessageVideo::validateRequest($videoId, $post + ['mk_request_agree' => '1']);
 
             return 'ok';
         } catch (RuntimeException $e) {
@@ -2150,6 +2150,15 @@ if (!$videoSeller || !$videoBuyer) {
         }
     };
 
+    check('注意事項に同意しないと依頼できない', (static function () use ($videoId): bool {
+        try {
+            MK\Product\MessageVideo::validateRequest($videoId, ['mk_message_type' => 'birthday', 'mk_request_name' => 'さくら']);
+
+            return false;
+        } catch (RuntimeException $e) {
+            return str_contains($e->getMessage(), '注意事項');
+        }
+    })());
     check('種類を選ばないと購入できない',
         $request(['mk_request_name' => 'さくら']) !== 'ok');
     check('対応していない種類は選べない',
@@ -2175,7 +2184,12 @@ if (!$videoSeller || !$videoBuyer) {
     check('対応している種類だけが選べる',
         str_contains($buyForm, '誕生日メッセージ') && !str_contains($buyForm, '感謝メッセージ'));
     check('お名前欄は20文字制限', str_contains($buyForm, 'name="mk_request_name" id="mk_request_name" maxlength="20" required'));
-    check('再配布禁止を購入前に伝える', str_contains($buyForm, '再配布は禁止'));
+    check('依頼の直前に注意事項を表示する', str_contains($buyForm, 'ご依頼前に必ずご確認ください')
+        && str_contains($buyForm, '性的・成人向けの内容'));
+    check('無断での共有・転載・拡散の禁止を伝える', str_contains($buyForm, 'SNS等へ投稿・拡散する行為は禁止'));
+    check('同意のチェック欄がある', str_contains($buyForm, 'name="mk_request_agree"'));
+    check('同意するまで依頼欄は操作できない', substr_count($buyForm, 'disabled data-mk-requires-agree') >= 3,
+        (string) substr_count($buyForm, 'disabled data-mk-requires-agree'));
     check('動画にはオプションを出さない', !str_contains($buyForm, 'mk_options[]'));
 
     echo "\n=== メッセージ動画：注文・送信・辞退 ===\n";
@@ -2185,9 +2199,10 @@ if (!$videoSeller || !$videoBuyer) {
         $videoBuyer,
         [],
         MK\Product\MessageVideo::validateRequest($videoId, [
-            'mk_message_type' => 'birthday',
-            'mk_request_name' => 'さくら',
-            'mk_request_body' => '10歳の誕生日です',
+            'mk_request_agree' => '1',
+            'mk_message_type'  => 'birthday',
+            'mk_request_name'  => 'さくら',
+            'mk_request_body'  => '10歳の誕生日です',
         ])
     );
     $videoOrderId = $videoOrder->get_id();
@@ -2196,6 +2211,8 @@ if (!$videoSeller || !$videoBuyer) {
         $videoOrder->get_meta(MK\Product\MessageVideo::META_TYPE_LABEL) === '誕生日メッセージ');
     check('注文にお名前が記録される',
         $videoOrder->get_meta(MK\Product\MessageVideo::META_REQUEST_NAME) === 'さくら');
+    check('同意した日時が注文に残る',
+        $videoOrder->get_meta(MK\Product\MessageVideo::META_REQUEST_AGREED_AT) !== '');
     check('注文に内容が記録される',
         $videoOrder->get_meta(MK\Product\MessageVideo::META_REQUEST_BODY) === '10歳の誕生日です');
     check('送信期限が注文に記録される', MK\Order\DispatchDeadline::daysFor($videoOrder) === 3,
@@ -2234,8 +2251,11 @@ if (!$videoSeller || !$videoBuyer) {
         MK\Order\VideoDelivery::normaliseUrl('https://vimeo.com.evil.example/123456789') === '');
 
     // 辞退：運営の確認待ちになり、期限切れ扱いにしない。
-    $declineReport = MK\Order\VideoDelivery::decline($videoOrder, $videoSeller->ID, '不適切な表現が含まれていたため');
+    $declineReport = MK\Order\VideoDelivery::decline($videoOrder, $videoSeller->ID, '不適切な表現が含まれていたため', 'buyer_request');
     $videoOrder = wc_get_order($videoOrderId);
+
+    check('辞退の種類が記録される',
+        $videoOrder->get_meta(MK\Order\VideoDelivery::META_DECLINE_KIND) === 'buyer_request');
 
     check('辞退が記録される', MK\Order\VideoDelivery::isDeclined($videoOrder));
     check('運営への申し出になる',
@@ -2243,8 +2263,8 @@ if (!$videoSeller || !$videoBuyer) {
     check('送金が保留される', $videoOrder->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
     check('辞退は購入者の返品理由に入らない',
         !isset(MK\Report\Service::returnGrounds()[MK\Order\VideoDelivery::REASON]));
-    check('辞退はクリエイター側の事情として扱う',
-        MK\Report\Service::isSellerFault(MK\Order\VideoDelivery::REASON));
+    check('辞退の負担は運営が判断する（自動でクリエイター負担にしない）',
+        !MK\Report\Service::isSellerFault(MK\Order\VideoDelivery::REASON));
 
     $videoOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT, gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS));
     $videoOrder->save();
@@ -2794,6 +2814,119 @@ if (is_wp_error($policyOrder)) {
     $policyOrder->delete(true);
 }
 
+echo "\n=== 事業者申請 ===\n";
+
+check('事業者区分は法人と個人事業主', array_keys(MK\Creator\Business::businessTypes()) === ['corporation', 'sole_proprietor']);
+
+$errorsFor = static fn (array $post, array $files = []): array => MK\Creator\Business::validationErrors($post, $files);
+
+check('区分を選ばないと登録できない', $errorsFor([]) !== []);
+check('個人は申請項目なしで登録できる', $errorsFor(['mk_seller_kind' => 'individual']) === []);
+
+$businessPost = [
+    'mk_seller_kind' => 'business',
+    'mk_business'    => [
+        'business_type'  => 'corporation',
+        'business_name'  => '株式会社スモーク',
+        'representative' => '山田太郎',
+        'address'        => '東京都千代田区1-1',
+        'phone'          => '0312345678',
+        'email'          => 'smoke@example.com',
+        'products'       => '古着',
+    ],
+];
+
+check('必須項目がそろえば申請できる', $errorsFor($businessPost) === [], implode(' / ', $errorsFor($businessPost)));
+
+$missing = $businessPost;
+unset($missing['mk_business']['representative']);
+check('代表者名がないと申請できない', (bool) array_filter($errorsFor($missing), static fn ($e) => str_contains($e, '代表者名')));
+
+$badMail = $businessPost;
+$badMail['mk_business']['email'] = 'not-an-email';
+check('メールアドレスの形式を確認する', $errorsFor($badMail) !== []);
+
+$badInvoice = $businessPost;
+$badInvoice['mk_business']['invoice_number'] = '1234';
+check('インボイス番号の形式を確認する', $errorsFor($badInvoice) !== []);
+
+$kobutsu = $businessPost;
+$kobutsu['mk_business']['needs_kobutsu'] = '1';
+check('古物商許可が必要なら許可番号と画像が必須', count($errorsFor($kobutsu)) >= 3, (string) count($errorsFor($kobutsu)));
+
+// Licence storage: outside the web root, random name, only real image/PDF content.
+check('許可証の保管場所は公開領域の外',
+    !str_starts_with(MK\Creator\Business::privateDir(), untrailingslashit(ABSPATH)),
+    MK\Creator\Business::privateDir());
+
+$png = wp_tempnam('mk-license.png');
+file_put_contents($png, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='));
+check('画像ファイルは受け付ける', MK\Creator\Business::fileProblem($png, 'license.png', (int) filesize($png)) === null);
+
+$fake = wp_tempnam('mk-license.png');
+file_put_contents($fake, '<?php echo "not an image";');
+check('画像を装ったファイルは受け付けない', MK\Creator\Business::fileProblem($fake, 'license.png', (int) filesize($fake)) !== null);
+@unlink($fake);
+
+$bizSeller = wp_insert_user(['user_login' => 'mk_smoke_biz_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($bizSeller)) {
+    check('business fixture', false, $bizSeller->get_error_message());
+} else {
+    $muteBiz = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteBiz, 99);
+
+    $stored = MK\Creator\Business::storeFile($png, 'license.png', false);
+    check('許可証を保存できる', $stored !== '' && (bool) preg_match('/^[a-f0-9]{32}\.png$/', $stored), $stored);
+    update_user_meta($bizSeller, MK\Creator\Business::META_LICENSE, $stored);
+    check('保存した許可証を運営が参照できる', MK\Creator\Business::licensePath($bizSeller) !== '');
+
+    update_user_meta($bizSeller, MK\Creator\Business::META_LICENSE, '../../wp-config.php');
+    check('任意のパスは参照させない', MK\Creator\Business::licensePath($bizSeller) === '');
+    update_user_meta($bizSeller, MK\Creator\Business::META_LICENSE, $stored);
+
+    $publish = static fn (int $author): string => MK\Creator\Business::gate(
+        ['post_type' => 'product', 'post_status' => 'publish', 'post_author' => $author], []
+    )['post_status'];
+
+    check('個人は公開できる', $publish($bizSeller) === 'publish');
+
+    update_user_meta($bizSeller, MK\Creator\Business::META_KIND, MK\Creator\Business::KIND_BUSINESS);
+    update_user_meta($bizSeller, MK\Creator\Business::META_STATUS, MK\Creator\Business::STATUS_PENDING);
+
+    check('審査中の事業者は公開できない', $publish($bizSeller) === 'draft');
+    check('審査中の事業者は審査申請もできない',
+        MK\Creator\Business::gate(['post_type' => 'product', 'post_status' => 'pending', 'post_author' => $bizSeller], [])['post_status'] === 'draft');
+    check('審査中は事業者表示を出さない', !MK\Creator\Business::isApproved($bizSeller));
+
+    wp_set_current_user($bizSeller);
+    ob_start(); MK\Creator\Business::notice(); $pendingNotice = (string) ob_get_clean();
+    wp_set_current_user(0);
+    check('審査中であることと目安の期間を伝える', str_contains($pendingNotice, '最大1週間程度'));
+
+    MK\Creator\Business::decide($bizSeller, true, '', 1);
+
+    check('承認した事業者は公開できる', $publish($bizSeller) === 'publish');
+    ob_start(); MK\Creator\Business::renderStoreBadge($bizSeller); $badge = (string) ob_get_clean();
+    check('承認した事業者にはショップに「事業者」表示', str_contains($badge, '事業者'));
+
+    MK\Creator\Business::decide($bizSeller, false, 'smoke', 1);
+    check('承認されなかった事業者は公開できない', $publish($bizSeller) === 'draft');
+
+    check('運営の商品は対象外',
+        MK\Creator\Business::gate(['post_type' => 'product', 'post_status' => 'publish', 'post_author' => 1], [])['post_status'] === 'publish');
+
+    @unlink(MK\Creator\Business::privateDir() . '/' . $stored);
+    remove_filter('mk_should_notify', $muteBiz, 99);
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($bizSeller);
+    check('後始末：事業者テストのユーザーと許可証を削除', !get_userdata($bizSeller) && !is_file(MK\Creator\Business::privateDir() . '/' . $stored));
+}
+
+@unlink($png);
+
 echo "\n=== 返金の負担はクリエイター側の事情で決まる ===\n";
 
 $costCreator = get_user_by('login', 'mk_test_creator');
@@ -2828,7 +2961,11 @@ if (!$costCreator) {
     check('理由がなければ運営が選べる（運営負担）', MK\Order\CancelAdmin::costBearer($plain, 'platform') === 'platform');
     check('理由がなければ運営が選べる（クリエイター負担）', MK\Order\CancelAdmin::costBearer($plain, 'creator') === 'creator');
     check('未選択なら運営負担', MK\Order\CancelAdmin::costBearer($plain, '') === 'platform');
-    check('選べる画面には2つのボタン', str_contains($renderBox($plain), '運営負担として返金する'));
+    $plainBox = $renderBox($plain);
+    check('選べる画面には3つの結果', str_contains($plainBox, '①クリエイターの責任')
+        && str_contains($plainBox, '②購入者の責任') && str_contains($plainBox, '③責任が明確でない'));
+    check('購入者の責任も選べる', MK\Order\CancelAdmin::costBearer($plain, 'buyer') === 'buyer');
+    check('不明な値は運営負担', MK\Order\CancelAdmin::costBearer($plain, 'bogus') === 'platform');
 
     // A ground that is nobody's fault on its face stays the operator's call.
     $damaged = $makeOrder();
@@ -2843,7 +2980,9 @@ if (!$costCreator) {
     check('サイズ相違はクリエイター負担', MK\Order\CancelAdmin::costBearer($mismatch, 'platform') === 'creator');
 
     $mismatchBox = $renderBox($mismatch);
-    check('クリエイター側の事情では運営負担ボタンを出さない', !str_contains($mismatchBox, '運営負担として返金する'));
+    check('クリエイター側の事情では他の結果を出さない', !str_contains($mismatchBox, '③責任が明確でない')
+        && !str_contains($mismatchBox, '②購入者の責任'));
+    check('クリエイター側の事情は購入者負担にもできない', MK\Order\CancelAdmin::costBearer($mismatch, 'buyer') === 'creator');
     check('クリエイター負担だと明示する', str_contains($mismatchBox, 'クリエイター負担です'));
 
     // Closing the report before refunding does not change why the refund happens.
@@ -2860,8 +2999,22 @@ if (!$costCreator) {
     // A declined message video is the creator's side too.
     $declined = $makeOrder();
     $costReports[] = $service->open(1, MK\Report\Service::TARGET_ORDER, $declined->get_id(), MK\Order\VideoDelivery::REASON, 'smoke');
-    check('辞退の返金はクリエイター負担', MK\Order\CancelAdmin::costBearer($declined, 'platform') === 'creator');
-    check('辞退の返金でも負担は選ばせない', !str_contains($renderBox($declined), '運営負担として返金する'));
+    check('辞退は運営が判断：クリエイター負担', MK\Order\CancelAdmin::costBearer($declined, 'creator') === 'creator');
+    check('辞退は運営が判断：購入者負担', MK\Order\CancelAdmin::costBearer($declined, 'buyer') === 'buyer');
+    check('辞退は運営が判断：運営負担', MK\Order\CancelAdmin::costBearer($declined, 'platform') === 'platform');
+
+    // The creator's own account of the decline decides which outcome is offered first.
+    $declined->update_meta_data(MK\Product\MessageVideo::META_KIND, MK\Product\MessageVideo::KIND);
+    $declined->update_meta_data(MK\Order\VideoDelivery::META_DECLINED_AT, gmdate('Y-m-d H:i:s'));
+    $declined->update_meta_data(MK\Order\VideoDelivery::META_DECLINE_KIND, 'buyer_request');
+    $declined->save();
+    check('不適切な依頼の申告なら購入者負担を先に示す',
+        MK\Order\CancelAdmin::recommendedBearer(wc_get_order($declined->get_id())) === 'buyer');
+
+    $declined->update_meta_data(MK\Order\VideoDelivery::META_DECLINE_KIND, 'creator');
+    $declined->save();
+    check('クリエイター都合の申告ならクリエイター負担を先に示す',
+        MK\Order\CancelAdmin::recommendedBearer(wc_get_order($declined->get_id())) === 'creator');
 
     global $wpdb;
 

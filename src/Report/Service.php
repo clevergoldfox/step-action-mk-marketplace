@@ -104,17 +104,22 @@ final class Service
     }
 
     /**
-     * Whether this ground is a problem on the creator's side.
+     * Whether this ground is, on its face, a problem on the creator's side.
      *
      * The client's rule: a refund caused by the creator -- not posting in time,
-     * a listing that does not match the item, a message video they declined
-     * to record -- is at the creator's cost, and the refund screen does not
-     * offer the operator a choice about it (see Order\CancelAdmin::costBearer).
+     * a listing that does not match the item -- is at the creator's cost, and
+     * the refund screen does not offer the operator a choice about it (see
+     * Order\CancelAdmin::costBearer).
      *
-     * Grounds that are nobody's fault on their face are deliberately absent. A
-     * parcel damaged in transit arrives under the same ground as one packed
-     * badly, and only a person looking at the photographs can tell them apart,
-     * so those stay the operator's decision.
+     * A declined message video is deliberately NOT here. The client split it
+     * three ways (2026-09-17): a creator who declined for their own reasons
+     * pays; a creator who rightly refused an inappropriate request does not,
+     * and the buyer bears the costs; and anything unclear is the operator's
+     * finding. The ground alone cannot say which, so the operator decides.
+     *
+     * Grounds that are nobody's fault on their face are absent for the same
+     * reason. A parcel damaged in transit arrives under the same ground as one
+     * packed badly, and only a person looking at the photographs can tell.
      */
     public static function isSellerFault(string $reason): bool
     {
@@ -124,7 +129,6 @@ final class Service
             'size_mismatch',
             'condition_mismatch',
             'wrong_item',
-            'creator_declined',
         ], true);
     }
 

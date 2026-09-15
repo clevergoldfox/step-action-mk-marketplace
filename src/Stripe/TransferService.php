@@ -32,6 +32,12 @@ final class TransferService
     public const META_REVERSED    = '_mk_reversed_amount';
     public const META_REFUND_ID   = '_mk_stripe_refund_id';
 
+    /** How much actually went back to the buyer, in yen. */
+    public const META_REFUND_AMOUNT = '_mk_refund_amount';
+
+    /** Who bore the unwind's costs: 'creator', 'buyer' or 'platform'. */
+    public const META_COST_BEARER = '_mk_refund_cost_bearer';
+
     public const STATUS_PENDING  = 'pending';
     public const STATUS_SENT     = 'sent';
     public const STATUS_REVERSED = 'reversed';
@@ -204,6 +210,60 @@ final class TransferService
         $refundId = (new PaymentService())->refund($order, $refundAmount);
 
         $this->recordUnwind($order, $reversed, $refundId, $additionalCost, $chargeToCreator);
+    }
+
+    /**
+     * Refund a buyer whose own conduct ended the sale, less what refunding costs.
+     *
+     * The client's rule (2026-09-17): when a cancellation is the buyer's
+     * responsibility -- a message video request a creator rightly refused as
+     * inappropriate, for instance -- the buyer bears the costs the platform
+     * actually incurs and cannot get back. Today that is Stripe's processing
+     * fee, which Stripe keeps on a refund. It is read from the charge rather
+     * than estimated, so what the buyer is told was deducted is exactly what
+     * Stripe kept.
+     *
+     * Only before payout. After a transfer the creator's share has left the
+     * platform, and a buyer-responsible unwind would need its own rules for
+     * a reversal the creator's balance cannot cover. Nothing needs that today
+     * -- a declined video has never been paid out -- so it is refused rather
+     * than guessed at.
+     *
+     * No ledger entry: the creator is neither charged nor credited, and the
+     * platform is not out of pocket. The amounts are kept on the order.
+     *
+     * @return array{refunded:int, fee:int, refund_id:string}
+     * @throws RuntimeException if the creator has already been paid, or the
+     *                          costs would consume the whole payment
+     */
+    public function refundWithBuyerCost(WC_Order $order): array
+    {
+        if ((string) $order->get_meta(self::META_TRANSFER_ID) !== '') {
+            throw new RuntimeException('出品者への送金後は、購入者負担での返金はできません。');
+        }
+
+        $total  = (int) $order->get_total();
+        $fee    = $this->stripeFeeFor($order);
+        $amount = $total - $fee;
+
+        if ($amount <= 0) {
+            throw new RuntimeException('返金に伴う費用が代金を上回るため、購入者負担での返金はできません。');
+        }
+
+        $refundId = (new PaymentService())->refund($order, $amount);
+
+        $order->update_meta_data(self::META_REFUND_ID, $refundId);
+        $order->update_meta_data(self::META_REFUND_AMOUNT, $amount);
+        $order->update_meta_data(self::META_COST_BEARER, 'buyer');
+        $order->add_order_note(sprintf(
+            '返金処理を実行しました（購入者負担）。代金 %s から、返還されない決済手数料 %s を差し引いた %s を返金しました。',
+            Money::format($total),
+            Money::format($fee),
+            Money::format($amount)
+        ));
+        $order->save();
+
+        return ['refunded' => $amount, 'fee' => $fee, 'refund_id' => $refundId];
     }
 
     /**
@@ -424,7 +484,7 @@ final class TransferService
      * domestic cards, 3.98% for PayPay), and an estimate that is a few yen
      * out becomes an account that will not reconcile.
      */
-    private function stripeFeeFor(WC_Order $order): int
+    public function stripeFeeFor(WC_Order $order): int
     {
         $chargeId = (string) $order->get_meta(PaymentService::META_CHARGE_ID);
 

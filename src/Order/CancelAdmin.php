@@ -22,18 +22,25 @@ use WC_Order;
  * a cancellation. Now that a missed dispatch deadline produces exactly such a
  * request, the flow the client described ends here, and it needs a button.
  *
- * Everything about the refund itself is deliberately blunt: full amount, a
- * confirmation, and a note on the order saying who did it. A partial refund is
- * a different conversation and belongs in a different control.
+ * The refund itself is deliberately blunt: one action, a confirmation, and a
+ * note on the order saying who did it and how much went back. It is the full
+ * amount, except where the buyer is found responsible and bears the costs the
+ * platform cannot recover. An arbitrary partial refund is a different
+ * conversation and belongs in a different control.
  *
- * Who pays for it is a rule where the grounds make it one. The client's policy
- * (revised 2026-09-16): a refund caused on the creator's side -- a missed
- * deadline, condition or size described wrongly, a different item, a message
- * video they declined -- is always the creator's cost, and the operator is
- * not offered a choice; costBearer() enforces it on submit as well as in the
- * form. Only where the grounds are nobody's fault on their face, such as a
- * parcel damaged in transit, does the operator choose, because that is a
- * finding of fact about photographs that no rule can make.
+ * Who pays for it follows the client's three-way rule (2026-09-17):
+ *
+ *   ① creator's responsibility   full refund; the creator bears the costs
+ *   ② buyer's responsibility     refund less the costs the platform cannot
+ *                                recover; the buyer bears them
+ *   ③ neither clearly            the operator finds who bears them
+ *
+ * Where the grounds themselves are on the creator's side -- a missed deadline,
+ * a listing that does not match the item -- ① is not a choice: the form offers
+ * only it, and costBearer() enforces it on submit. Everything else, a declined
+ * message video included, is the operator's finding, because the ground alone
+ * cannot say whether a creator refused an abusive request or simply lost
+ * interest.
  */
 final class CancelAdmin
 {
@@ -111,7 +118,10 @@ final class CancelAdmin
             );
         }
 
-        printf('<p>購入者へ <strong>%s</strong> を全額返金します。</p>', esc_html(Money::format($total)));
+        printf(
+            '<p>ご購入代金：<strong>%s</strong><br><small>購入者の責任とする場合のみ、返還されない決済手数料を差し引いて返金します。</small></p>',
+            esc_html(Money::format($total))
+        );
 
         if ($paidOut) {
             echo '<p style="color:#b32d2e"><strong>この取引はすでに出品者へ送金済みです。</strong>'
@@ -148,34 +158,69 @@ final class CancelAdmin
                 esc_html(implode('／', $creatorSide))
             );
 
-            if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && VideoDelivery::isDeclined($order)) {
-                echo '<p class="description">辞退を認めず撮影を続けてもらう場合は、返金せずに'
-                    . '「通報の管理」から「解決（送金を再開）」を選んでください。</p>';
-            }
-
             printf(
                 '<p><button type="submit" name="charge" value="creator" class="button button-primary" style="width:100%%" '
                 . 'onclick="return confirm(%s);">キャンセルして全額返金する</button></p>',
                 $confirm
             );
-        } else {
-            echo '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
-                . '<strong>返金にかかる費用の負担</strong><br>'
-                . '返金しても Stripe の決済手数料は戻りません。配送事故など、'
-                . 'クリエイターに責任がない場合は運営負担を選んでください。</p>';
+
+            echo '</form>';
+
+            return;
+        }
+
+        $recommended = self::recommendedBearer($order);
+
+        echo '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
+            . '<strong>返金にかかる費用の負担</strong><br>'
+            . '内容を確認のうえ、責任の所在に応じて選んでください。</p>';
+
+        if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && VideoDelivery::isDeclined($order)) {
+            $kinds = VideoDelivery::declineKinds();
+            $kind  = (string) $order->get_meta(VideoDelivery::META_DECLINE_KIND);
 
             printf(
-                '<p><button type="submit" name="charge" value="creator" class="button" style="width:100%%" '
-                . 'onclick="return confirm(%s);">クリエイター負担として返金する</button></p>',
-                $confirm
-            );
-
-            printf(
-                '<p><button type="submit" name="charge" value="platform" class="button button-primary" style="width:100%%" '
-                . 'onclick="return confirm(%s);">運営負担として返金する</button></p>',
-                $confirm
+                '<p>クリエイターの申告：<strong>%s</strong><br>理由：%s</p>'
+                . '<p class="description">辞退を認めず撮影を続けてもらう場合は、返金せずに'
+                . '「通報の管理」から「解決（送金を再開）」を選んでください。</p>',
+                esc_html($kinds[$kind] ?? $kinds['other']),
+                esc_html((string) $order->get_meta(VideoDelivery::META_DECLINE_REASON))
             );
         }
+
+        $primary = static fn (string $bearer): string => $bearer === $recommended ? 'button-primary' : '';
+
+        printf(
+            '<p><button type="submit" name="charge" value="creator" class="button %s" style="width:100%%" '
+            . 'onclick="return confirm(%s);">①クリエイターの責任<br><small>全額返金／費用はクリエイター負担</small></button></p>',
+            $primary('creator'),
+            $confirm
+        );
+
+        if ($paidOut) {
+            echo '<p class="description">②購入者の責任：出品者へ送金済みのため、購入者負担での返金は選べません。</p>';
+        } else {
+            $fee = self::safeFee($order);
+
+            $detail = $fee === null
+                ? '返還されない決済手数料を差し引いて返金'
+                : sprintf('%s を返金（決済手数料 %s を差し引き）', Money::format($total - $fee), Money::format($fee));
+
+            printf(
+                '<p><button type="submit" name="charge" value="buyer" class="button %s" style="width:100%%" '
+                . 'onclick="return confirm(%s);">②購入者の責任<br><small>%s</small></button></p>',
+                $primary('buyer'),
+                '\'購入者の責任として、返還されない決済手数料を差し引いて返金します。元に戻せません。よろしいですか？\'',
+                esc_html($detail)
+            );
+        }
+
+        printf(
+            '<p><button type="submit" name="charge" value="platform" class="button %s" style="width:100%%" '
+            . 'onclick="return confirm(%s);">③責任が明確でない<br><small>全額返金／費用は運営負担</small></button></p>',
+            $primary('platform'),
+            $confirm
+        );
 
         echo '</form>';
     }
@@ -200,12 +245,18 @@ final class CancelAdmin
         $paidOut = $order->get_meta(TransferService::META_TRANSFER_ID) !== '';
 
         // Decided by the grounds whenever they are on the creator's side, and by
-        // the form only otherwise. Read before the refund runs: resolving the
-        // reports is part of the refund, and must not change who pays for it.
-        $chargeToCreator = self::costBearer($order, (string) wp_unslash($_POST['charge'] ?? '')) === 'creator';
+        // the operator's finding otherwise. Read before the refund runs:
+        // resolving the reports is part of the refund, and must not change who
+        // pays for it.
+        $bearer   = self::costBearer($order, sanitize_key(wp_unslash((string) ($_POST['charge'] ?? ''))));
+        $refunded = (int) $order->get_total();
 
         try {
-            (new TransferService())->refundAndReverse($order, null, 0, $chargeToCreator);
+            if ($bearer === 'buyer') {
+                $refunded = (int) (new TransferService())->refundWithBuyerCost($order)['refunded'];
+            } else {
+                (new TransferService())->refundAndReverse($order, null, 0, $bearer === 'creator');
+            }
         } catch (\Throwable $e) {
             // Deliberately not swallowed into a note nobody reads: the money
             // did not move, and the operator must see that on the screen they
@@ -221,12 +272,17 @@ final class CancelAdmin
 
         $admin = wp_get_current_user();
 
-        $order = wc_get_order($orderId);   // reload: refundAndReverse saved it
+        $order = wc_get_order($orderId);   // reload: the refund saved it
+        $label = self::bearerLabel($bearer);
+
+        $order->update_meta_data(TransferService::META_COST_BEARER, $bearer);
+        $order->update_meta_data(TransferService::META_REFUND_AMOUNT, $refunded);
 
         $order->add_order_note(sprintf(
-            '運営が取引をキャンセルし、全額を返金しました（操作者：%s／費用負担：%s）。%s',
+            '運営が取引をキャンセルし、%sを返金しました（操作者：%s／費用負担：%s）。%s',
+            Money::format($refunded),
             $admin->display_name,
-            $chargeToCreator ? '出品者' : '運営',
+            $label,
             $reason !== '' ? '理由：' . $reason : ''
         ));
         $order->save();
@@ -242,7 +298,7 @@ final class CancelAdmin
                 get_current_user_id(),
                 sprintf(
                     'キャンセル・返金対応済み（費用負担：%s）%s',
-                    $chargeToCreator ? '出品者' : '運営',
+                    $label,
                     $reason !== '' ? '：' . $reason : ''
                 ),
                 false
@@ -263,14 +319,18 @@ final class CancelAdmin
     }
 
     /**
-     * Who pays for refunding this order: 'creator' or 'platform'.
+     * Who bears the costs of refunding this order: 'creator', 'buyer' or
+     * 'platform'.
      *
-     * The client's rule: when the refund is caused on the creator's side --
-     * a missed deadline, a listing that does not match the item, a message
-     * video they declined -- the creator pays, and the operator is not asked.
-     * Otherwise the operator decides from the form, and an unanswered form
-     * means the platform: better to absorb a cost than to bill a creator for
-     * one nobody attributed to them.
+     * Where the grounds are on the creator's side the creator pays, and what
+     * was posted is ignored. Otherwise it is the operator's finding, and an
+     * unanswered or unrecognised form means the platform: better to absorb a
+     * cost than to bill a creator, or short a buyer, for one nobody attributed
+     * to them.
+     *
+     * 'buyer' is returned as posted even after payout, where it cannot be
+     * carried out. The refund then fails loudly and moves no money, which is
+     * the right outcome for a choice the operator made on out-of-date facts.
      */
     public static function costBearer(WC_Order $order, string $posted): string
     {
@@ -278,7 +338,43 @@ final class CancelAdmin
             return 'creator';
         }
 
-        return $posted === 'creator' ? 'creator' : 'platform';
+        return in_array($posted, ['creator', 'buyer'], true) ? $posted : 'platform';
+    }
+
+    /** Japanese for who bore the costs, for notes and report records. */
+    public static function bearerLabel(string $bearer): string
+    {
+        return ['creator' => 'クリエイター', 'buyer' => '購入者', 'platform' => '運営'][$bearer] ?? '運営';
+    }
+
+    /**
+     * Which outcome the form offers first.
+     *
+     * A declined message video carries the creator's own account of why. It
+     * is a claim, not a finding -- the operator still decides -- but it is the
+     * best starting point there is.
+     */
+    public static function recommendedBearer(WC_Order $order): string
+    {
+        if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && VideoDelivery::isDeclined($order)) {
+            return match ((string) $order->get_meta(VideoDelivery::META_DECLINE_KIND)) {
+                'buyer_request' => 'buyer',
+                'creator'       => 'creator',
+                default         => 'platform',
+            };
+        }
+
+        return 'platform';
+    }
+
+    /** The fee Stripe kept, or null if it cannot be read right now. */
+    private static function safeFee(WC_Order $order): ?int
+    {
+        try {
+            return (new TransferService())->stripeFeeFor($order);
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     /**

@@ -47,6 +47,9 @@ final class VideoDelivery
     public const META_DECLINED_AT    = '_mk_video_declined_at';
     public const META_DECLINE_REASON = '_mk_video_decline_reason';
 
+    /** The creator's account of why: a key of declineKinds(). */
+    public const META_DECLINE_KIND = '_mk_video_decline_kind';
+
     /** The report reason a decline is filed under. */
     public const REASON = 'creator_declined';
 
@@ -97,6 +100,25 @@ final class VideoDelivery
         }
 
         return esc_url_raw($url, ['https']);
+    }
+
+    /**
+     * What the creator says the decline is about.
+     *
+     * The client's three-way refund rule turns on whose responsibility the
+     * decline is, and the creator is the first person who knows. It is their
+     * claim, recorded for the operator -- who still makes the finding and can
+     * disagree -- not a decision that moves money by itself.
+     *
+     * @return array<string, string>
+     */
+    public static function declineKinds(): array
+    {
+        return [
+            'buyer_request' => '依頼内容が不適切（購入者側の問題）',
+            'creator'       => 'クリエイターの都合',
+            'other'         => 'その他・判断がつかない',
+        ];
     }
 
     public static function isDeclined(WC_Order $order): bool
@@ -180,9 +202,20 @@ final class VideoDelivery
         echo '<details class="mk-video-decline"><summary>このリクエストをお受けできない場合</summary>';
 
         echo '<p class="mk-field-help">依頼内容に不適切な表現が含まれているなど、撮影をお受けできない場合は、撮影前に辞退できます。'
-            . '辞退すると運営が内容を確認し、購入者へ全額返金します。</p>';
+            . '辞退すると運営が内容を確認し、キャンセル・返金などの対応を決定します。</p>';
 
         printf('<form method="post" action="%s">', esc_url($action));
+
+        echo '<div class="dokan-form-group"><label class="dokan-form-label" for="mk_decline_kind">'
+            . '辞退の理由の種類<span class="required">*</span></label>'
+            . '<select name="mk_decline_kind" id="mk_decline_kind" class="dokan-form-control" required>'
+            . '<option value="">選択してください</option>';
+
+        foreach (self::declineKinds() as $key => $label) {
+            printf('<option value="%s">%s</option>', esc_attr($key), esc_html($label));
+        }
+
+        echo '</select></div>';
 
         printf(
             '<div class="dokan-form-group"><label class="dokan-form-label" for="mk_decline_reason">'
@@ -293,7 +326,14 @@ final class VideoDelivery
             exit;
         }
 
-        self::decline($order, get_current_user_id(), $reason);
+        $kind = isset($_POST['mk_decline_kind']) ? sanitize_key(wp_unslash((string) $_POST['mk_decline_kind'])) : '';
+
+        if (!isset(self::declineKinds()[$kind])) {
+            wp_safe_redirect(add_query_arg('mk_video_error', 'kind', $back));
+            exit;
+        }
+
+        self::decline($order, get_current_user_id(), $reason, $kind);
 
         wp_safe_redirect(add_query_arg('mk_video_declined', '1', $back));
         exit;
@@ -305,11 +345,19 @@ final class VideoDelivery
      * Public so it can be exercised without a request; the handler above is
      * the only caller in production.
      */
-    public static function decline(WC_Order $order, int $creatorId, string $reason): int
+    public static function decline(WC_Order $order, int $creatorId, string $reason, string $kind = 'other'): int
     {
+        $kinds = self::declineKinds();
+        $kind  = isset($kinds[$kind]) ? $kind : 'other';
+
         $order->update_meta_data(self::META_DECLINED_AT, gmdate('Y-m-d H:i:s'));
         $order->update_meta_data(self::META_DECLINE_REASON, $reason);
-        $order->add_order_note('クリエイターがリクエストを辞退しました。運営の確認待ちです。理由：' . $reason);
+        $order->update_meta_data(self::META_DECLINE_KIND, $kind);
+        $order->add_order_note(sprintf(
+            'クリエイターがリクエストを辞退しました。運営の確認待ちです。種類：%s／理由：%s',
+            $kinds[$kind],
+            $reason
+        ));
         $order->save();
 
         // A declined order is not late. Left running, the deadline would tell
@@ -322,7 +370,7 @@ final class VideoDelivery
             ReportService::TARGET_ORDER,
             $order->get_id(),
             self::REASON,
-            $reason
+            sprintf('【%s】%s', $kinds[$kind], $reason)
         );
 
         do_action('mk_video_declined', $order->get_id(), $creatorId);
@@ -391,7 +439,7 @@ final class VideoDelivery
         if ($status === Statuses::PAID) {
             if (self::isDeclined($order)) {
                 echo '<p class="mk-video-panel__notice">クリエイターが今回のリクエストをお受けできないとの連絡がありました。'
-                    . '運営が内容を確認しており、確認後にご返金の手続きをいたします。結果はメールでお知らせします。</p>';
+                    . '運営が内容を確認のうえ、対応を決定いたします。結果はメールでお知らせします。</p>';
             } else {
                 printf(
                     '<p class="mk-video-panel__notice">クリエイターが撮影中です。<strong>%s頃まで</strong>に送信される予定です。'
