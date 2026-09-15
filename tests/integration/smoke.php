@@ -2243,8 +2243,8 @@ if (!$videoSeller || !$videoBuyer) {
     check('送金が保留される', $videoOrder->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
     check('辞退は購入者の返品理由に入らない',
         !isset(MK\Report\Service::returnGrounds()[MK\Order\VideoDelivery::REASON]));
-    check('辞退は出品者の責を既定にしない',
-        !MK\Report\Service::isSellerFault(MK\Order\VideoDelivery::REASON));
+    check('辞退はクリエイター側の事情として扱う',
+        MK\Report\Service::isSellerFault(MK\Order\VideoDelivery::REASON));
 
     $videoOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT, gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS));
     $videoOrder->save();
@@ -2792,6 +2792,93 @@ if (is_wp_error($policyOrder)) {
     require_once ABSPATH . 'wp-admin/includes/user.php';
     wp_delete_user($policyBuyer);
     $policyOrder->delete(true);
+}
+
+echo "\n=== 返金の負担はクリエイター側の事情で決まる ===\n";
+
+$costCreator = get_user_by('login', 'mk_test_creator');
+
+if (!$costCreator) {
+    check('cost fixtures', false, 'test creator missing');
+} else {
+    $muteCost = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteCost, 99);
+
+    $makeOrder = static function () use ($costCreator): WC_Order {
+        $o = wc_create_order();
+        $o->update_meta_data('_mk_creator_id', $costCreator->ID);
+        $o->set_status(MK\Order\Statuses::PAID);
+        $o->save();
+
+        return wc_get_order($o->get_id());
+    };
+
+    $renderBox = static function (WC_Order $o): string {
+        ob_start();
+        MK\Order\CancelAdmin::renderBox($o);
+
+        return (string) ob_get_clean();
+    };
+
+    $costReports = [];
+    $service     = new MK\Report\Service();
+
+    // No grounds at all: the operator chooses, and silence means the platform.
+    $plain = $makeOrder();
+    check('理由がなければ運営が選べる（運営負担）', MK\Order\CancelAdmin::costBearer($plain, 'platform') === 'platform');
+    check('理由がなければ運営が選べる（クリエイター負担）', MK\Order\CancelAdmin::costBearer($plain, 'creator') === 'creator');
+    check('未選択なら運営負担', MK\Order\CancelAdmin::costBearer($plain, '') === 'platform');
+    check('選べる画面には2つのボタン', str_contains($renderBox($plain), '運営負担として返金する'));
+
+    // A ground that is nobody's fault on its face stays the operator's call.
+    $damaged = $makeOrder();
+    $costReports[] = $service->open(1, MK\Report\Service::TARGET_ORDER, $damaged->get_id(), 'damaged', 'smoke');
+    check('破損は運営が判断できる', MK\Order\CancelAdmin::costBearer($damaged, 'platform') === 'platform');
+
+    // Creator-side grounds: the creator pays whatever the form says.
+    $mismatch = $makeOrder();
+    $mismatchReport = $service->open(1, MK\Report\Service::TARGET_ORDER, $mismatch->get_id(), 'size_mismatch', 'smoke');
+    $costReports[] = $mismatchReport;
+
+    check('サイズ相違はクリエイター負担', MK\Order\CancelAdmin::costBearer($mismatch, 'platform') === 'creator');
+
+    $mismatchBox = $renderBox($mismatch);
+    check('クリエイター側の事情では運営負担ボタンを出さない', !str_contains($mismatchBox, '運営負担として返金する'));
+    check('クリエイター負担だと明示する', str_contains($mismatchBox, 'クリエイター負担です'));
+
+    // Closing the report before refunding does not change why the refund happens.
+    $service->resolve($mismatchReport, 1, 'smoke', false);
+    check('申し出を閉じてもクリエイター負担のまま',
+        MK\Order\CancelAdmin::costBearer(wc_get_order($mismatch->get_id()), 'platform') === 'creator');
+
+    // A missed deadline counts even when nobody asked to cancel.
+    $late = $makeOrder();
+    $late->update_meta_data(MK\Order\DispatchDeadline::META_OVERDUE_AT, gmdate('Y-m-d H:i:s'));
+    $late->save();
+    check('期限超過はクリエイター負担', MK\Order\CancelAdmin::costBearer(wc_get_order($late->get_id()), 'platform') === 'creator');
+
+    // A declined message video is the creator's side too.
+    $declined = $makeOrder();
+    $costReports[] = $service->open(1, MK\Report\Service::TARGET_ORDER, $declined->get_id(), MK\Order\VideoDelivery::REASON, 'smoke');
+    check('辞退の返金はクリエイター負担', MK\Order\CancelAdmin::costBearer($declined, 'platform') === 'creator');
+    check('辞退の返金でも負担は選ばせない', !str_contains($renderBox($declined), '運営負担として返金する'));
+
+    global $wpdb;
+
+    foreach ($costReports as $reportId) {
+        $wpdb->delete($wpdb->prefix . 'mk_reports', ['id' => $reportId], ['%d']);
+    }
+
+    foreach ([$plain, $damaged, $mismatch, $late, $declined] as $o) {
+        MK\Schedule\Jobs::cancelDispatchOverdue($o->get_id());
+        MK\Schedule\Jobs::cancelAutoComplete($o->get_id());
+        $wpdb->delete($wpdb->prefix . 'dokan_orders', ['order_id' => $o->get_id()], ['%d']);
+        wc_get_order($o->get_id())->delete(true);
+    }
+
+    remove_filter('mk_should_notify', $muteCost, 99);
+
+    check('後始末：負担テストの注文を削除', !wc_get_order($plain->get_id()) && !wc_get_order($declined->get_id()));
 }
 
 echo "\n=== 返金費用の負担先 ===\n";

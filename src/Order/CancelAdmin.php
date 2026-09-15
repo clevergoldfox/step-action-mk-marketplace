@@ -26,13 +26,14 @@ use WC_Order;
  * confirmation, and a note on the order saying who did it. A partial refund is
  * a different conversation and belongs in a different control.
  *
- * The one thing the operator must decide is who pays for it. Per the client's
- * policy a refund caused by the seller -- not posted, condition or size
- * described wrongly, a different item, a deliberate misdescription -- is at
- * the seller's cost, and anything else the platform carries. That is a finding
- * of fact about photographs and messages, so it is two buttons rather than a
- * rule: the ground the buyer filed under decides which one is offered first,
- * and nothing more.
+ * Who pays for it is a rule where the grounds make it one. The client's policy
+ * (revised 2026-09-16): a refund caused on the creator's side -- a missed
+ * deadline, condition or size described wrongly, a different item, a message
+ * video they declined -- is always the creator's cost, and the operator is
+ * not offered a choice; costBearer() enforces it on submit as well as in the
+ * form. Only where the grounds are nobody's fault on their face, such as a
+ * parcel damaged in transit, does the operator choose, because that is a
+ * finding of fact about photographs that no rule can make.
  */
 final class CancelAdmin
 {
@@ -124,19 +125,7 @@ final class CancelAdmin
             echo '<p>この取引の未対応の申し出も、あわせて解決済みにします。</p>';
         }
 
-        // Which button is offered first is a recommendation, not a decision.
-        // The operator is the only one who has seen the photographs.
-        $sellerAtFault = false;
-
-        foreach ($open as $report) {
-            $sellerAtFault = $sellerAtFault || ReportService::isSellerFault((string) $report->reason);
-        }
-
-        echo '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
-            . '<strong>返金にかかる費用の負担</strong><br>'
-            . '返金しても Stripe の決済手数料は戻りません。'
-            . '出品者の責による返金であれば出品者負担とし、'
-            . '次回の売上から自動的に差し引きます。</p>';
+        $creatorSide = self::creatorSideReasons($order);
 
         printf('<form method="post" action="%s">', esc_url(admin_url('admin-post.php')));
         wp_nonce_field(self::NONCE);
@@ -146,20 +135,47 @@ final class CancelAdmin
 
         $confirm = '\'この取引をキャンセルし、購入者へ全額返金します。元に戻せません。よろしいですか？\'';
 
-        printf(
-            '<p><button type="submit" name="charge" value="creator" class="button %s" style="width:100%%" '
-            . 'onclick="return confirm(%s);">出品者の責として返金する%s</button></p>',
-            $sellerAtFault ? 'button-primary' : '',
-            $confirm,
-            $sellerAtFault ? '<br><small>（申し出の理由から、こちらが想定されます）</small>' : ''
-        );
+        if ($creatorSide !== []) {
+            // Not offered as a choice. The client's rule is that a refund caused
+            // on the creator's side is the creator's cost; costBearer() enforces
+            // the same on submit, so this form is not what makes it true.
+            printf(
+                '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
+                . '<strong>返金にかかる費用はクリエイター負担です</strong><br>'
+                . '理由：%s<br>'
+                . 'クリエイター側の事情による返金のため、決済手数料等はクリエイターの未回収額として計上し、'
+                . '次回以降の売上から差し引きます。</p>',
+                esc_html(implode('／', $creatorSide))
+            );
 
-        printf(
-            '<p><button type="submit" name="charge" value="platform" class="button %s" style="width:100%%" '
-            . 'onclick="return confirm(%s);">運営負担として返金する</button></p>',
-            $sellerAtFault ? '' : 'button-primary',
-            $confirm
-        );
+            if (\MK\Product\MessageVideo::isMessageVideoOrder($order) && VideoDelivery::isDeclined($order)) {
+                echo '<p class="description">辞退を認めず撮影を続けてもらう場合は、返金せずに'
+                    . '「通報の管理」から「解決（送金を再開）」を選んでください。</p>';
+            }
+
+            printf(
+                '<p><button type="submit" name="charge" value="creator" class="button button-primary" style="width:100%%" '
+                . 'onclick="return confirm(%s);">キャンセルして全額返金する</button></p>',
+                $confirm
+            );
+        } else {
+            echo '<p style="border-top:1px solid #dcdcde;padding-top:8px">'
+                . '<strong>返金にかかる費用の負担</strong><br>'
+                . '返金しても Stripe の決済手数料は戻りません。配送事故など、'
+                . 'クリエイターに責任がない場合は運営負担を選んでください。</p>';
+
+            printf(
+                '<p><button type="submit" name="charge" value="creator" class="button" style="width:100%%" '
+                . 'onclick="return confirm(%s);">クリエイター負担として返金する</button></p>',
+                $confirm
+            );
+
+            printf(
+                '<p><button type="submit" name="charge" value="platform" class="button button-primary" style="width:100%%" '
+                . 'onclick="return confirm(%s);">運営負担として返金する</button></p>',
+                $confirm
+            );
+        }
 
         echo '</form>';
     }
@@ -183,11 +199,10 @@ final class CancelAdmin
 
         $paidOut = $order->get_meta(TransferService::META_TRANSFER_ID) !== '';
 
-        // Default to the platform carrying it. If the form is ever posted
-        // without the choice, the wrong outcome is the platform absorbing a
-        // cost it need not have -- not a seller silently billed for one an
-        // operator never attributed to them.
-        $chargeToCreator = (($_POST['charge'] ?? '') === 'creator');
+        // Decided by the grounds whenever they are on the creator's side, and by
+        // the form only otherwise. Read before the refund runs: resolving the
+        // reports is part of the refund, and must not change who pays for it.
+        $chargeToCreator = self::costBearer($order, (string) wp_unslash($_POST['charge'] ?? '')) === 'creator';
 
         try {
             (new TransferService())->refundAndReverse($order, null, 0, $chargeToCreator);
@@ -245,6 +260,52 @@ final class CancelAdmin
 
         wp_safe_redirect(add_query_arg('mk_cancelled', '1', self::orderUrl($orderId)));
         exit;
+    }
+
+    /**
+     * Who pays for refunding this order: 'creator' or 'platform'.
+     *
+     * The client's rule: when the refund is caused on the creator's side --
+     * a missed deadline, a listing that does not match the item, a message
+     * video they declined -- the creator pays, and the operator is not asked.
+     * Otherwise the operator decides from the form, and an unanswered form
+     * means the platform: better to absorb a cost than to bill a creator for
+     * one nobody attributed to them.
+     */
+    public static function costBearer(WC_Order $order, string $posted): string
+    {
+        if (self::creatorSideReasons($order) !== []) {
+            return 'creator';
+        }
+
+        return $posted === 'creator' ? 'creator' : 'platform';
+    }
+
+    /**
+     * Labels of the creator-side grounds on this order.
+     *
+     * Every report counts, resolved or not: an operator who closed the report
+     * before pressing refund has not changed why the refund is happening. A
+     * missed dispatch deadline counts on its own, whether or not the buyer
+     * asked to cancel.
+     *
+     * @return string[]
+     */
+    private static function creatorSideReasons(WC_Order $order): array
+    {
+        $labels = [];
+
+        foreach ((new ReportService())->allFor(ReportService::TARGET_ORDER, $order->get_id()) as $report) {
+            if (ReportService::isSellerFault((string) $report->reason)) {
+                $labels[] = ReportService::reasonLabel((string) $report->reason);
+            }
+        }
+
+        if ((string) $order->get_meta(DispatchDeadline::META_OVERDUE_AT) !== '') {
+            $labels[] = DispatchDeadline::verb($order) . '期限の超過';
+        }
+
+        return array_values(array_unique($labels));
     }
 
     public static function notices(): void

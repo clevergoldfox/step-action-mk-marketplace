@@ -104,12 +104,17 @@ final class Service
     }
 
     /**
-     * Whether this ground, on its face, is the seller's doing.
+     * Whether this ground is a problem on the creator's side.
      *
-     * Only the operator decides who pays -- this is what the refund screen
-     * offers them first, not what it does for them. A parcel damaged in
-     * transit is filed under the same ground as one packed badly, and only a
-     * person looking at the photographs can tell those apart.
+     * The client's rule: a refund caused by the creator -- not posting in time,
+     * a listing that does not match the item, a message video they declined
+     * to record -- is at the creator's cost, and the refund screen does not
+     * offer the operator a choice about it (see Order\CancelAdmin::costBearer).
+     *
+     * Grounds that are nobody's fault on their face are deliberately absent. A
+     * parcel damaged in transit arrives under the same ground as one packed
+     * badly, and only a person looking at the photographs can tell them apart,
+     * so those stay the operator's decision.
      */
     public static function isSellerFault(string $reason): bool
     {
@@ -119,7 +124,28 @@ final class Service
             'size_mismatch',
             'condition_mismatch',
             'wrong_item',
+            'creator_declined',
         ], true);
+    }
+
+    /**
+     * Every report against one thing, resolved or not.
+     *
+     * @return array<int, object> oldest first
+     */
+    public function allFor(string $targetType, int $targetId): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}mk_reports
+                  WHERE target_type = %s AND target_id = %d
+               ORDER BY id ASC",
+                $targetType,
+                $targetId
+            )
+        ) ?: [];
     }
 
     // ------------------------------------------------------------------ open
