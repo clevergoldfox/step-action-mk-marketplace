@@ -46,6 +46,9 @@ final class FormGuide
         add_action('dokan_product_edit_after_options', [self::class, 'submitButtons'], 90, 1);
         add_action('dokan_product_content_inside_area_before', [self::class, 'savedNotice']);
 
+        // Before anything is typed: what may not be listed at all.
+        add_action('dokan_new_product_before_product_area', [self::class, 'guidelineNotice'], 1);
+
         add_filter('body_class', [self::class, 'bodyClass']);
 
         add_action('wp_print_footer_scripts', [self::class, 'script'], 20);
@@ -355,6 +358,28 @@ final class FormGuide
      * route back to the half-finished listing is the browser's back button.
      * Shown only to the person who owns the listing, and to the operator.
      */
+    /**
+     * Point the creator at the guideline before they list anything.
+     *
+     * The commerce disclosure tells creators to read the prohibited-items
+     * guideline before listing; this is where listing happens. Silent when
+     * the page is not published, rather than linking to a 404.
+     */
+    public static function guidelineNotice(): void
+    {
+        $page = get_page_by_path('guideline');
+
+        if (!$page || $page->post_status !== 'publish') {
+            return;
+        }
+
+        printf(
+            '<p class="mk-guideline-notice">出品できない商品やコンテンツがあります。出品前に'
+            . '<a href="%s" target="_blank" rel="noopener">ガイドライン</a>をご確認ください。</p>',
+            esc_url((string) get_permalink($page))
+        );
+    }
+
     public static function backToEdit(): void
     {
         global $product;

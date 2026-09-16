@@ -3375,6 +3375,13 @@ if (!is_wp_error($pubSeller)) {
     wp_delete_user($pubSeller);
 }
 
+echo "\n=== ガイドライン ===\n";
+
+$guidelinePage = get_page_by_path('guideline');
+check('ガイドラインのページが公開されている', $guidelinePage && $guidelinePage->post_status === 'publish');
+ob_start(); MK\Product\FormGuide::guidelineNotice(); $guidelineNotice = (string) ob_get_clean();
+check('出品画面からガイドラインへ案内', $guidelinePage && str_contains($guidelineNotice, (string) get_permalink($guidelinePage)));
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');
