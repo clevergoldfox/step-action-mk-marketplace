@@ -170,6 +170,17 @@ final class Jobs
     /** Hide the buyer's address from the creator once the sale is history. */
     public static function scheduleAddressMask(int $orderId): void
     {
+        // Scheduled at 受取確認 and again at completed; the first one stands.
+        if (as_has_scheduled_action(self::MASK_ADDRESS, ['order_id' => $orderId], self::GROUP)) {
+            return;
+        }
+
+        $order = wc_get_order($orderId);
+
+        if ($order instanceof WC_Order && $order->get_meta('_mk_shipping_masked') === 'yes') {
+            return;
+        }
+
         $days = (int) get_option('mk_shipping_mask_days', 30);
 
         as_schedule_single_action(

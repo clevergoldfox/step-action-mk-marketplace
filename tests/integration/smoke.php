@@ -3194,6 +3194,189 @@ if (is_wp_error($costSeller)) {
         )) === 0);
 }
 
+echo "\n=== お届け先の取得と表示 ===\n";
+
+$SA = MK\Checkout\ShippingAddress::class;
+
+[$addr, $addrErrors] = $SA::normalise([
+    'last_name' => '山田', 'first_name' => '花子', 'postcode' => '１５０ー０００１', 'state' => 'JP13',
+    'city' => '渋谷区', 'address_1' => '神宮前１－２－３', 'address_2' => '', 'phone' => '090-1234-5678',
+]);
+check('全角の郵便番号をそろえて受け付ける', $addrErrors === [] && $addr['postcode'] === '150-0001', implode(' / ', $addrErrors) . ' ' . ($addr['postcode'] ?? ''));
+check('電話番号は数字だけで保存', ($addr['phone'] ?? '') === '09012345678');
+check('番地の全角数字もそろえる', ($addr['address_1'] ?? '') === '神宮前1-2-3', $addr['address_1'] ?? '');
+
+[, $badErrors] = $SA::normalise(['last_name' => '', 'first_name' => '花子', 'postcode' => '123', 'state' => 'XX',
+    'city' => '渋谷区', 'address_1' => '1-2-3', 'phone' => '12345']);
+check('不足・不正な住所は理由つきで拒否',
+    in_array('姓を入力してください。', $badErrors, true)
+    && in_array('郵便番号は7桁の数字で入力してください。', $badErrors, true)
+    && in_array('都道府県を選んでください。', $badErrors, true)
+    && in_array('電話番号は、0から始まる10桁または11桁の数字で入力してください。', $badErrors, true),
+    implode(' / ', $badErrors));
+check('都道府県の一覧は47件', count($SA::prefectures()) === 47, (string) count($SA::prefectures()));
+
+$shipOrder = wc_create_order();
+$shipOrder->update_meta_data($SA::META_NEEDS, 'yes');
+$shipOrder->set_status('pending');
+$shipOrder->save();
+$shipOrder = wc_get_order($shipOrder->get_id());
+
+check('配送が必要な注文', $SA::needsShipping($shipOrder));
+check('住所がなければ未登録扱い', !$SA::hasAddress($shipOrder));
+check('住所がないとお支払いの前に入力画面', str_contains($SA::renderForm($shipOrder), 'name="mk_shipping[postcode]"'));
+
+$SA::saveToOrder($shipOrder, $addr);
+$shipOrder = wc_get_order($shipOrder->get_id());
+check('住所を注文に保存', $SA::hasAddress($shipOrder) && $shipOrder->get_shipping_postcode() === '150-0001' && $shipOrder->get_shipping_phone() === '09012345678');
+check('発送用の表記', implode('|', $SA::lines($shipOrder)) === '〒150-0001|東京都渋谷区神宮前1-2-3|山田 花子 様|TEL 09012345678', implode('|', $SA::lines($shipOrder)));
+
+check('支払い前はクリエイターに見せない', !$SA::visibleToCreator($shipOrder));
+$shipOrder->set_status(MK\Order\Statuses::PAID);
+$shipOrder->save();
+check('支払い後はクリエイターに見せる', $SA::visibleToCreator(wc_get_order($shipOrder->get_id())));
+
+$shipOrder = wc_get_order($shipOrder->get_id());
+$shipOrder->update_meta_data($SA::META_MASKED, 'yes');
+$shipOrder->save();
+check('非表示後はクリエイターに見せない', !$SA::visibleToCreator(wc_get_order($shipOrder->get_id())));
+
+$dokanSelling = get_option('dokan_selling');
+check('Dokanの顧客情報欄（メール・IP）は出さない', is_array($dokanSelling) && ($dokanSelling['hide_customer_info'] ?? '') === 'on');
+
+$videoOrder = wc_create_order();
+$videoOrder->update_meta_data($SA::META_NEEDS, 'no');
+$videoOrder->save();
+check('配送のない注文は住所を求めない', !$SA::needsShipping(wc_get_order($videoOrder->get_id())));
+
+$maskUser = wp_insert_user(['user_login' => 'mk_smoke_ship_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+if (!is_wp_error($maskUser)) {
+    $SA::saveToProfile($maskUser, $addr);
+    $fresh = wc_create_order(['customer_id' => $maskUser]);
+    check('アカウントの住所を次回の初期値にする', $SA::prefill($fresh, $maskUser)['postcode'] === '150-0001');
+    $fresh->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($maskUser);
+}
+
+// Transitions: 受取確認 schedules the mask; cancellation hides at once.
+$flowOrder = wc_create_order();
+$flowOrder->update_meta_data($SA::META_NEEDS, 'yes');
+$flowOrder->set_status(MK\Order\Statuses::SHIPPED);
+$flowOrder->save();
+add_filter('mk_should_notify', '__return_false', 99);
+$flowOrder = wc_get_order($flowOrder->get_id());
+$flowOrder->update_status(MK\Order\Statuses::RECEIVED);
+check('受取確認で30日後の非表示を予約',
+    (bool) as_next_scheduled_action(MK\Schedule\Jobs::MASK_ADDRESS, ['order_id' => $flowOrder->get_id()], 'mk-marketplace'));
+MK\Schedule\Jobs::cancelTransfer($flowOrder->get_id());
+
+$cancelOrder = wc_create_order();
+$cancelOrder->update_meta_data($SA::META_NEEDS, 'yes');
+$cancelOrder->set_status(MK\Order\Statuses::PAID);
+$cancelOrder->save();
+wc_get_order($cancelOrder->get_id())->update_status('cancelled');
+check('キャンセルで直ちに非表示', $SA::isMasked(wc_get_order($cancelOrder->get_id())));
+remove_filter('mk_should_notify', '__return_false', 99);
+
+$unscheduleAll = static function (int $orderId): void {
+    foreach ([MK\Schedule\Jobs::AUTO_COMPLETE, MK\Schedule\Jobs::EXECUTE_TRANSFER, MK\Schedule\Jobs::MASK_ADDRESS, MK\Schedule\Jobs::DISPATCH_OVERDUE] as $hook) {
+        as_unschedule_all_actions($hook, ['order_id' => $orderId], 'mk-marketplace');
+    }
+};
+
+foreach ([$shipOrder, $videoOrder, $flowOrder, $cancelOrder] as $o) {
+    $unscheduleAll($o->get_id());
+    global $wpdb;
+    $wpdb->delete($wpdb->prefix . 'dokan_orders', ['order_id' => $o->get_id()], ['%d']);
+    wc_get_order($o->get_id())->delete(true);
+}
+check('後始末：お届け先テストの注文を削除', !wc_get_order($shipOrder->get_id()) && !wc_get_order($cancelOrder->get_id()));
+
+echo "\n=== レビューは受取完了した購入者のみ ===\n";
+
+check('「購入者のみ」を強制', get_option('woocommerce_review_rating_verification_required') === 'yes');
+
+$reviewBuyer = wp_insert_user(['user_login' => 'mk_smoke_rev_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+$reviewProduct = new WC_Product_Simple();
+$reviewProduct->set_name('smoke review product');
+$reviewProduct->set_regular_price('1000');
+$reviewProduct->save();
+$rp = $reviewProduct->get_id();
+
+if (!is_wp_error($reviewBuyer)) {
+    check('未ログインは投稿できない', !wc_customer_bought_product('', 0, $rp));
+    check('購入していなければ投稿できない', !wc_customer_bought_product('', $reviewBuyer, $rp));
+
+    $ro = wc_create_order(['customer_id' => $reviewBuyer]);
+    $ro->update_meta_data('_mk_product_id', $rp);
+    $ro->set_status(MK\Order\Statuses::SHIPPED);
+    $ro->save();
+    check('発送済みでも受取前は投稿できない', !wc_customer_bought_product('', $reviewBuyer, $rp));
+
+    $ro = wc_get_order($ro->get_id());
+    $ro->set_status(MK\Order\Statuses::RECEIVED);
+    $ro->save();
+    check('受取確認後は投稿できる', wc_customer_bought_product('', $reviewBuyer, $rp));
+    check('別の商品には投稿できない', !wc_customer_bought_product('', $reviewBuyer, $rp + 999999));
+
+    $ro = wc_get_order($ro->get_id());
+    $ro->set_status('cancelled');
+    $ro->save();
+    check('キャンセルされた注文では投稿できない', !wc_customer_bought_product('', $reviewBuyer, $rp));
+
+    // A one-off item is sold by the time its buyer can review it.
+    wp_update_post(['ID' => $rp, 'post_status' => MK\Product\Statuses::SOLD]);
+    check('売却済み商品は通常は非公開のまま', get_post_status($rp) === MK\Product\Statuses::SOLD);
+    $savedScript = $_SERVER['SCRIPT_NAME'] ?? '';
+    $_SERVER['SCRIPT_NAME'] = '/wp-comments-post.php';
+    $_POST['comment_post_ID'] = (string) $rp;
+    check('売却済み商品にもレビューを受け付ける', get_post_status($rp) === 'publish');
+    $_POST['comment_post_ID'] = (string) ($rp + 1);
+    check('別の投稿へのコメント処理では変えない', get_post_status($rp) === MK\Product\Statuses::SOLD);
+    unset($_POST['comment_post_ID']);
+    $_SERVER['SCRIPT_NAME'] = $savedScript;
+
+    check('案内文は日本語で受取完了に言及',
+        __('Only logged in customers who have purchased this product may leave a review.', 'woocommerce') === 'この商品を購入し、受取が完了した方のみレビューを投稿できます。');
+
+    $unscheduleAll($ro->get_id());
+    $ro->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($reviewBuyer);
+}
+
+wp_delete_post($rp, true);
+
+echo "\n=== 承認済み事業者の表示 ===\n";
+
+$pubSeller = wp_insert_user(['user_login' => 'mk_smoke_pub_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (!is_wp_error($pubSeller)) {
+    $B = MK\Creator\Business::class;
+    update_user_meta($pubSeller, $B::META_DATA, [
+        'business_type' => 'corporation', 'business_name' => '株式会社スモーク', 'representative' => '山田太郎',
+        'address' => '大阪府大阪市北区1-1', 'phone' => '0600000000', 'email' => 'smoke@example.com',
+        'invoice_number' => 'T1234567890123', 'kobutsu_number' => '第1号', 'needs_kobutsu' => true,
+    ]);
+    update_user_meta($pubSeller, $B::META_KIND, $B::KIND_BUSINESS);
+    update_user_meta($pubSeller, $B::META_STATUS, $B::STATUS_PENDING);
+
+    ob_start(); $B::renderStoreInfo((object) ['ID' => $pubSeller]); $pendingInfo = (string) ob_get_clean();
+    check('審査中は事業者情報を公開しない', $pendingInfo === '');
+
+    update_user_meta($pubSeller, $B::META_STATUS, $B::STATUS_APPROVED);
+    ob_start(); $B::renderStoreInfo((object) ['ID' => $pubSeller]); $info = (string) ob_get_clean();
+    check('承認後はショップに事業者情報を表示',
+        str_contains($info, '株式会社スモーク') && str_contains($info, '山田太郎') && str_contains($info, '大阪府大阪市北区1-1')
+        && str_contains($info, '0600000000') && str_contains($info, 'smoke@example.com'));
+    check('許可番号・インボイス番号は公開しない', !str_contains($info, 'T1234567890123') && !str_contains($info, '第1号'));
+    check('申請時に公開される項目を案内する', str_contains($B::publicNotice(), 'ショップページに表示されます'));
+
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($pubSeller);
+}
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');

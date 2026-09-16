@@ -19,9 +19,10 @@ use WC_Order;
  *   pending   -> paid        schedule the dispatch deadline (+1-7d, promised)
  *   paid      -> shipped     schedule auto-complete   (+7d)
  *   shipped   -> received    schedule transfer        (+7d or +14d)
- *   received  -> completed   schedule address masking (+30d)
- *   any       -> cancelled   cancel everything, release the item
- *   any       -> refunded    cancel everything; recovery is manual
+ *                            schedule address masking (+30d)
+ *   received  -> completed   address masking, if not already scheduled
+ *   any       -> cancelled   cancel everything, release the item, hide address
+ *   any       -> refunded    cancel everything, hide address; recovery is manual
  */
 final class Transitions
 {
@@ -94,6 +95,11 @@ final class Transitions
         // useless for spotting real problems.
         Jobs::cancelAutoComplete($order->get_id());
 
+        // 受取確認 is when the sale is complete in the terms' sense, and the
+        // privacy policy counts the creator's 30 days of seeing the address
+        // from here -- not from 'completed', which only arrives after payout.
+        Jobs::scheduleAddressMask($order->get_id());
+
         // The creator must not be able to release their own funds, no matter
         // which code path set the status. Dokan's REST bulk-action endpoint
         // lets a vendor set any status on an order they own, and enumerating
@@ -159,6 +165,9 @@ final class Transitions
             }
         }
 
+        // Nothing left to post, so the creator loses sight of the address now.
+        $order->update_meta_data(\MK\Checkout\ShippingAddress::META_MASKED, 'yes');
+
         $order->add_order_note('取引がキャンセルされました。送金予定を取り消し、商品を再出品しました。');
         $order->save();
     }
@@ -168,6 +177,11 @@ final class Transitions
         Jobs::cancelAutoComplete($order->get_id());
         Jobs::cancelTransfer($order->get_id());
         Jobs::cancelDispatchOverdue($order->get_id());
+
+        if ($order->get_meta(\MK\Checkout\ShippingAddress::META_MASKED) !== 'yes') {
+            $order->update_meta_data(\MK\Checkout\ShippingAddress::META_MASKED, 'yes');
+            $order->save();
+        }
 
         // Deliberately NOT calling refundAndReverse() here.
         //

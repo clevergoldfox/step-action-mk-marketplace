@@ -117,6 +117,7 @@ final class Business
 
         add_action('dokan_store_header_after_store_name', [self::class, 'renderStoreBadge'], 10, 1);
         add_action('dokan_product_seller_tab_start', [self::class, 'renderSellerTabBadge'], 10, 1);
+        add_action('dokan_store_profile_frame_after', [self::class, 'renderStoreInfo'], 10, 2);
     }
 
     // ---------------------------------------------------------------- reads
@@ -262,7 +263,8 @@ final class Business
 
         echo '<p class="mk-business-notice">事業者申請は、運営の審査後に承認となります。'
             . '<strong>申請から承認まで、最大1週間程度かかる場合があります。</strong>'
-            . '承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。</p>';
+            . '承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。<br>'
+            . self::publicNotice() . '</p>';
 
         self::renderApplicationInputs();
 
@@ -770,7 +772,8 @@ final class Business
         echo '<input type="hidden" name="mk_business_apply" value="1">';
 
         echo '<div class="mk-business-apply" data-mk-business><div class="mk-business-fields">';
-        echo '<p class="mk-business-notice"><strong>申請から承認まで、最大1週間程度かかる場合があります。</strong></p>';
+        echo '<p class="mk-business-notice"><strong>申請から承認まで、最大1週間程度かかる場合があります。</strong><br>'
+            . esc_html(self::publicNotice()) . '</p>';
 
         self::renderApplicationInputs();
 
@@ -928,6 +931,67 @@ final class Business
         echo '<div class="dokan-alert dokan-alert-info"><strong>事業者申請を審査中です。</strong><br>'
             . '承認されるまで、商品は公開されません（下書きとして保存されます）。'
             . '申請から承認まで、最大1週間程度かかる場合があります。承認されましたらメールでお知らせします。</div>';
+    }
+
+    // ------------------------------------------------------- public details
+
+    /**
+     * What an approved business shows buyers on its shop page.
+     *
+     * A business selling to consumers online has to say who it is -- name,
+     * representative, address, phone, email -- and the client chose to show
+     * it on the shop page (2026-09-19). Only these five come from the
+     * application; the licence image, permit number and invoice number stay
+     * with the operator.
+     *
+     * @return array<string, string> label => value, empty unless approved
+     */
+    public static function publicDetails(int $userId): array
+    {
+        if (!self::isApproved($userId)) {
+            return [];
+        }
+
+        $data = self::applicationOf($userId);
+        $rows = [
+            '事業者名'       => (string) ($data['business_name'] ?? ''),
+            '代表者名'       => (string) ($data['representative'] ?? ''),
+            '所在地'         => (string) ($data['address'] ?? ''),
+            '電話番号'       => (string) ($data['phone'] ?? ''),
+            'メールアドレス' => (string) ($data['email'] ?? ''),
+        ];
+
+        return array_filter($rows, static fn (string $value): bool => $value !== '');
+    }
+
+    /** Told to every applicant before they send anything. */
+    public static function publicNotice(): string
+    {
+        return '承認後、法人名または屋号・代表者名・所在地・電話番号・メールアドレスは、'
+            . '特定商取引法に基づく表記としてショップページに表示されます。'
+            . '古物商許可証の画像などの審査用資料は公開されません。';
+    }
+
+    /**
+     * @param mixed $storeUser the vendor's WP_User data object
+     * @param mixed $storeInfo
+     */
+    public static function renderStoreInfo($storeUser, $storeInfo = []): void
+    {
+        $id   = is_object($storeUser) && isset($storeUser->ID) ? (int) $storeUser->ID : (int) $storeUser;
+        $rows = self::publicDetails($id);
+
+        if ($rows === []) {
+            return;
+        }
+
+        echo '<details class="mk-business-info"><summary>事業者情報（特定商取引法に基づく表記）</summary><dl>';
+
+        foreach ($rows as $label => $value) {
+            printf('<dt>%s</dt><dd>%s</dd>', esc_html($label), esc_html($value));
+        }
+
+        echo '</dl></details>';
     }
 
     // ----------------------------------------------------------------- badge

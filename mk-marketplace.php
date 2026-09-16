@@ -128,6 +128,8 @@ add_action('plugins_loaded', static function (): void {
     Creator\BusinessAdmin::register();
     Ledger\Admin::register();
     Checkout\Controller::register();
+    Checkout\ShippingAddress::register();
+    Product\Reviews::register();
     Account\Registration::register();
     Account\Terms::register();
     Account\TermsAdmin::register();

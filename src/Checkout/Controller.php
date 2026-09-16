@@ -594,6 +594,17 @@ final class Controller
 
     private static function renderPaymentForm(WC_Order $order): string
     {
+        // A parcel needs somewhere to go before it is paid for. The card form,
+        // and the client secret that goes with it, are not rendered until the
+        // order carries an address. See ShippingAddress.
+        $needsShipping = ShippingAddress::needsShipping($order);
+
+        if ($needsShipping
+            && (!ShippingAddress::hasAddress($order) || isset($_GET['mk_edit_address']) || ShippingAddress::hasErrors())
+        ) {
+            return ShippingAddress::renderForm($order);
+        }
+
         $intentId = (string) $order->get_meta(PaymentService::META_INTENT_ID);
 
         if ($intentId === '') {
@@ -631,6 +642,16 @@ final class Controller
                     <th>商品</th>
                     <td><?php echo esc_html((string) $order->get_meta('_mk_title_snapshot')); ?></td>
                 </tr>
+                <tr>
+                    <th>販売価格</th>
+                    <td><?php echo esc_html(number_format((int) $order->get_meta('_mk_product_amount')) . '円'); ?></td>
+                </tr>
+                <?php if ($needsShipping) : ?>
+                    <tr>
+                        <th>送料</th>
+                        <td>販売価格に含まれています（追加の送料はかかりません）</td>
+                    </tr>
+                <?php endif; ?>
                 <?php
                 $optionLabel  = (string) $order->get_meta('_mk_option_snapshot');
                 $optionAmount = (int) $order->get_meta('_mk_option_amount');
@@ -654,7 +675,38 @@ final class Controller
                         echo esc_html(number_format((int) $order->get_total()) . '円');
                     ?></strong></td>
                 </tr>
+                <?php if ($needsShipping) : ?>
+                    <tr>
+                        <th>お届け先</th>
+                        <td><?php echo ShippingAddress::renderSummary($order); // escaped inside ?></td>
+                    </tr>
+                <?php endif; ?>
+                <tr>
+                    <th>お支払い方法</th>
+                    <td>クレジットカード等（下記よりお選びください）</td>
+                </tr>
             </table>
+
+            <div class="mk-checkout-terms">
+                <p>購入者のご都合によるキャンセル・返品・返金は、原則としてお受けしておりません。
+                <?php if (!$needsShipping) : ?>
+                    デジタルコンテンツ（メッセージ動画を含みます）は、提供後の返金もお受けしておりません。
+                <?php endif; ?>
+                商品の未着や説明との相違など、クリエイター側に問題がある場合は、取引画面からお申し出ください。</p>
+                <p><?php
+                    $links = array_filter([
+                        \MK\Account\Terms::url('customer') !== ''
+                            ? sprintf('<a href="%s" target="_blank" rel="noopener">利用規約</a>', esc_url(\MK\Account\Terms::url('customer')))
+                            : '',
+                        \MK\Account\Terms::privacyUrl() !== ''
+                            ? sprintf('<a href="%s" target="_blank" rel="noopener">プライバシーポリシー</a>', esc_url(\MK\Account\Terms::privacyUrl()))
+                            : '',
+                    ]);
+
+                    echo implode('・', $links); // built from escaped parts
+                    echo $links ? 'をご確認のうえ、' : '';
+                ?>「支払う」を押すと、上記の内容で購入が確定します。</p>
+            </div>
 
             <form id="mk-payment-form">
                 <div id="mk-payment-element"></div>

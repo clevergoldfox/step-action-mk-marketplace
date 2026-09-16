@@ -129,6 +129,12 @@ final class OrderBuilder
         $order->update_meta_data('_mk_option_snapshot', $optionLabel);
         $order->update_meta_data('_mk_has_open_report', 'no');
 
+        // Decided once, from the listing as bought. See ShippingAddress.
+        $order->update_meta_data(
+            ShippingAddress::META_NEEDS,
+            ShippingAddress::productNeedsShipping($product) ? 'yes' : 'no'
+        );
+
         // The two claims the buyer decided on, frozen at the moment they
         // decided. Read live afterwards, a creator could re-grade a disputed
         // item or stretch their own dispatch deadline by editing the listing.
