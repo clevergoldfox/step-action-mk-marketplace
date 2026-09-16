@@ -1612,21 +1612,19 @@ check('login page links to sign-up',
 
 echo "\n=== 利用規約への同意 ===\n";
 
-foreach (['customer' => '購入者', 'seller' => '出品者'] as $role => $who) {
-    $pageId = MK\Account\Terms::pageId($role);
-    check($who . '向け規約のページがある', $pageId > 0 && get_post_status($pageId) === 'publish',
-        $pageId > 0 ? get_the_title($pageId) : '(未設定)');
-}
-
-check('購入者と出品者で別の規約', MK\Account\Terms::url('customer') !== MK\Account\Terms::url('seller'));
+$termsPage = MK\Account\Terms::pageId();
+check('利用規約のページがある', $termsPage > 0 && get_post_status($termsPage) === 'publish',
+    $termsPage > 0 ? get_the_title($termsPage) : '(未設定)');
+check('購入者も出品者も同じ利用規約', MK\Account\Terms::url('customer') === MK\Account\Terms::url('seller')
+    && MK\Account\Terms::url() !== '');
 check('プライバシーポリシーが公開されている', MK\Account\Terms::privacyUrl() !== '',
     MK\Account\Terms::privacyUrl() ?: '(未公開)');
 
 ob_start(); MK\Account\Terms::renderCheckbox(); $box = (string) ob_get_clean();
 check('同意チェックボックスがある', str_contains($box, 'name="mk_terms_agree"'));
-check('選んだ役割で規約リンクが変わる',
-    str_contains($box, 'data-buyer-url') && str_contains($box, 'data-seller-url')
-        && str_contains($box, MK\Account\Terms::url('seller')));
+check('利用規約にリンク', str_contains($box, MK\Account\Terms::url()) && str_contains($box, '>利用規約</a>'));
+ob_start(); MK\Account\Terms::renderMigrationCheckbox(); $migrationBox = (string) ob_get_clean();
+check('出品者登録画面も同じ利用規約', str_contains($migrationBox, MK\Account\Terms::url()) && str_contains($migrationBox, 'name="mk_terms_agree"'));
 check('プライバシーポリシーにもリンク', str_contains($box, MK\Account\Terms::privacyUrl()));
 
 // The check that decides: a browser's `required` attribute is a hint, and
