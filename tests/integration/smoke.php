@@ -3588,6 +3588,77 @@ foreach ([$wBuyer, $wCreator] as $u) {
 @unlink($fakePath);
 remove_filter('mk_should_notify', '__return_false', 99);
 
+echo "\n=== 利用停止と再登録の制限 ===\n";
+
+$SU = MK\Account\Suspension::class;
+$WD = MK\Account\Withdrawal::class;
+
+check('メールアドレスの別名をそろえて比較', $SU::normaliseEmail('Taro.Yamada+shop@GMAIL.com') === 'taroyamada@gmail.com'
+    && $SU::normaliseEmail('Hanako+x@Example.jp') === 'hanako@example.jp');
+check('電話番号の表記ゆれをそろえて比較', $SU::normalisePhone('０９０－１２３４－５６７８') === '09012345678' && $SU::normalisePhone('123') === '');
+
+add_filter('mk_should_notify', '__return_false', 99);
+require_once ABSPATH . 'wp-admin/includes/user.php';
+
+$barLocal  = 'mksmokebar' . wp_rand(100000, 999999);
+$barEmail  = $barLocal . '@gmail.com';
+$barPhone  = '090' . wp_rand(10000000, 99999999);
+$barSeller = wp_insert_user(['user_login' => 'mk_smoke_bar_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'user_email' => $barEmail, 'role' => 'seller']);
+
+if (!is_wp_error($barSeller)) {
+    update_user_meta($barSeller, 'billing_phone', $barPhone);
+
+    $WD::withdraw($barSeller);
+    clean_user_cache($barSeller);
+    check('通常の退会者は同じメールアドレスで再登録できる', !$SU::isBarred($barEmail) && !email_exists($barEmail));
+
+    update_user_meta($barSeller, MK\Creator\Restriction::USER_META, 'yes');
+    $variant = strtoupper(substr($barLocal, 0, 3)) . '.' . substr($barLocal, 3) . '+again@googlemail.com';
+    check('出品制限中に退会した出品者は同じメールアドレスで再登録できない', $SU::isBarred($barEmail));
+    check('「+」や大文字・ドットの違いでも再登録できない', $SU::isBarred($variant), $variant);
+    check('同じ電話番号でも再登録できない', $SU::isBarred('', '090-' . substr($barPhone, 3, 4) . '-' . substr($barPhone, 7)));
+
+    $_POST['phone'] = '';
+    $regErrors = $SU::guardRegistration(new WP_Error(), 'someone', $variant);
+    unset($_POST['phone']);
+    check('会員登録画面で拒否する', $regErrors->get_error_message('mk_barred') === $SU::REFUSAL);
+
+    $otherMember = wp_insert_user(['user_login' => 'mk_smoke_bar2_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+    if (!is_wp_error($otherMember)) {
+        $emailErrors = new WP_Error();
+        $SU::guardEmailChange($emailErrors, (object) ['ID' => $otherMember, 'user_email' => $barEmail]);
+        check('既存会員のメールアドレス変更でも使えない', $emailErrors->has_errors());
+        wp_delete_user($otherMember);
+    }
+
+    delete_user_meta($barSeller, MK\Creator\Restriction::USER_META);
+    check('措置を解除すれば再登録できる', !$SU::isBarred($barEmail));
+
+    wp_delete_user($barSeller);
+}
+
+$suspendPass = 'SuspendTest!' . wp_rand(1000, 9999);
+$suspendUser = wp_insert_user(['user_login' => 'mk_smoke_sus_' . wp_rand(1000, 9999), 'user_pass' => $suspendPass, 'user_email' => 'mk-smoke-sus-' . wp_rand(1000, 9999) . '@example.com', 'role' => 'customer']);
+
+if (!is_wp_error($suspendUser)) {
+    $suspendLogin = get_userdata($suspendUser)->user_login;
+    WP_Session_Tokens::get_instance($suspendUser)->create(time() + HOUR_IN_SECONDS);
+
+    $SU::suspend($suspendUser, 'smoke', 1);
+    $attempt = wp_authenticate($suspendLogin, $suspendPass);
+    check('利用停止中はログインできない', is_wp_error($attempt) && $attempt->get_error_code() === 'mk_suspended');
+    check('利用停止でログイン中のセッションも終了', count(WP_Session_Tokens::get_instance($suspendUser)->get_all()) === 0);
+    check('利用停止中はパスワード再設定できない', !apply_filters('allow_password_reset', true, $suspendUser));
+    check('利用停止中の会員のメールアドレスでは登録できない', $SU::isBarred(get_userdata($suspendUser)->user_email));
+
+    $SU::lift($suspendUser, 'smoke lifted');
+    check('利用停止を解除すればログインできる', wp_authenticate($suspendLogin, $suspendPass) instanceof WP_User);
+
+    wp_delete_user($suspendUser);
+}
+
+remove_filter('mk_should_notify', '__return_false', 99);
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');

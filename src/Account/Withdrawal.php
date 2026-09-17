@@ -253,6 +253,9 @@ final class Withdrawal
         update_user_meta($userId, self::META_AT, current_time('mysql', true));
         update_user_meta($userId, self::META_EMAIL, $user->user_email);
 
+        // Kept so a member under a measure cannot sign up again with them. See Suspension.
+        update_user_meta($userId, Suspension::META_PHONES, Suspension::phonesOf($userId));
+
         // Told while the address is still theirs.
         do_action('mk_user_withdrawn', $userId, $user->user_email);
 
@@ -441,10 +444,20 @@ final class Withdrawal
             return $value;
         }
 
-        $at = (string) get_user_meta((int) $userId, self::META_AT, true);
+        $at    = (string) get_user_meta((int) $userId, self::META_AT, true);
+        $lines = [];
 
-        return $at === ''
-            ? '—'
-            : esc_html('退会済み（' . get_date_from_gmt($at, 'Y/m/d') . '）') . '<br><small>' . esc_html((string) get_user_meta((int) $userId, self::META_EMAIL, true)) . '</small>';
+        if ($at !== '') {
+            $lines[] = esc_html('退会済み（' . get_date_from_gmt($at, 'Y/m/d') . '）')
+                . '<br><small>' . esc_html((string) get_user_meta((int) $userId, self::META_EMAIL, true)) . '</small>';
+        }
+
+        if (Suspension::isSuspended((int) $userId)) {
+            $lines[] = '<strong style="color:#b32d2e">利用停止中</strong>';
+        } elseif (\MK\Creator\Restriction::isRestricted((int) $userId)) {
+            $lines[] = '<strong style="color:#b32d2e">出品制限中</strong>';
+        }
+
+        return $lines === [] ? '—' : implode('<br>', $lines);
     }
 }

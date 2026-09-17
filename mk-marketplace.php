@@ -143,6 +143,7 @@ add_action('plugins_loaded', static function (): void {
     Report\ClaimFiles::register();
     Report\ClaimPage::register();
     Account\Withdrawal::register();
+    Account\Suspension::register();
     Report\Admin::register();
     Product\Statuses::register();
     Product\PublishGate::register();
