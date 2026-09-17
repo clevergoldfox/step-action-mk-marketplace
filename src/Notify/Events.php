@@ -30,6 +30,7 @@ final class Events
         add_action('woocommerce_order_status_changed', [self::class, 'onStatusChanged'], 20, 4);
         add_action('mk_message_sent', [self::class, 'onMessage'], 10, 4);
         add_action('mk_report_opened', [self::class, 'onReport'], 10, 3);
+        add_action('mk_user_withdrawn', [self::class, 'onWithdrawn'], 10, 2);
         add_action('mk_dispatch_overdue', [self::class, 'onDispatchOverdue'], 10, 2);
         add_action('mk_creator_repeatedly_late', [self::class, 'onRepeatedlyLate'], 10, 2);
         add_action('mk_creator_charged', [self::class, 'onCreatorCharged'], 10, 3);
@@ -645,22 +646,79 @@ final class Events
      */
     public static function onReport(int $reportId, string $targetType, int $targetId): void
     {
+        $report = (new \MK\Report\Service())->find($reportId);
+        $reason = $report ? \MK\Report\Service::reasonLabel((string) $report->reason) : '';
+
         foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
             Dispatcher::send(new Notification(
                 type: 'report.opened',
                 userId: (int) $adminId,
-                subject: '通報が届いています',
+                subject: '通報・申し出が届いています',
                 body: sprintf(
-                    "新しい通報が届いています（通報ID：%d／対象：%s #%d）。\n\n"
+                    "新しい通報・申し出が届いています（ID：%d／対象：%s #%d／内容：%s）。\n\n"
                     . "対象が取引の場合、確認が完了するまで出品者への送金は保留されます。\n"
                     . "管理画面よりご対応ください。",
                     $reportId,
                     $targetType,
-                    $targetId
+                    $targetId,
+                    $reason
                 ),
-                short: sprintf('通報 #%d が届いています。送金は保留中です。', $reportId),
+                short: sprintf('通報・申し出 #%d が届いています。送金は保留中です。', $reportId),
                 url: admin_url('admin.php?page=mk-reports'),
                 context: ['report_id' => $reportId],
+            ));
+        }
+
+        // The buyer who raised it hears that it arrived. The creator does
+        // not, for the reason above.
+        if ($report && $targetType === \MK\Report\Service::TARGET_ORDER) {
+            $order = wc_get_order($targetId);
+
+            if ($order instanceof \WC_Order && (int) $report->reporter_id === $order->get_customer_id()) {
+                Dispatcher::send(new Notification(
+                    type: 'report.received',
+                    userId: (int) $report->reporter_id,
+                    subject: '運営への申し出を受け付けました',
+                    body: sprintf(
+                        "ご注文 #%d について、運営への申し出を受け付けました（内容：%s）。\n\n"
+                        . "運営が内容を確認し、ご連絡いたします。確認が完了するまで、この取引の出品者への売上金の支払いは保留されます。",
+                        $targetId,
+                        $reason
+                    ),
+                    short: sprintf('ご注文 #%d の申し出を受け付けました。', $targetId),
+                    url: \MK\Report\ClaimPage::url(),
+                    context: ['report_id' => $reportId, 'order_id' => $targetId],
+                ));
+            }
+        }
+    }
+
+    /** A member left: the operator hears, and so does the member, at their own address. */
+    public static function onWithdrawn(int $userId, string $email): void
+    {
+        $user = get_userdata($userId);
+        $name = $user ? $user->display_name : '#' . $userId;
+
+        Dispatcher::send(new Notification(
+            type: 'account.withdrawn',
+            userId: $userId,
+            subject: '退会手続きが完了しました',
+            body: "TREASURE BUZZの退会手続きが完了しました。\nこれまでご利用いただき、ありがとうございました。\n\n"
+                . "退会前に成立した取引に関する情報は、利用規約およびプライバシーポリシーに従い、必要な期間保存されます。",
+            short: '退会手続きが完了しました。',
+            url: home_url('/'),
+            context: ['user_id' => $userId],
+        ));
+
+        foreach (get_users(['role' => 'administrator', 'fields' => 'ID']) as $adminId) {
+            Dispatcher::send(new Notification(
+                type: 'account.withdrawn.admin',
+                userId: (int) $adminId,
+                subject: '会員が退会しました',
+                body: sprintf("会員が退会しました。\n\n表示名：%s\nユーザーID：%d\nメールアドレス（退会時）：%s", $name, $userId, $email),
+                short: sprintf('%s さんが退会しました。', $name),
+                url: admin_url('users.php'),
+                context: ['user_id' => $userId],
             ));
         }
     }

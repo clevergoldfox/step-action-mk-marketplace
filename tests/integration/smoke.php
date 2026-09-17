@@ -2795,9 +2795,13 @@ if (is_wp_error($policyOrder)) {
     $policyOrder->save();
 
     wp_set_current_user((int) $policyBuyer);
-    ob_start(); MK\Report\Frontend::render($policyOrder); $form = (string) ob_get_clean();
+    ob_start(); MK\Report\Frontend::render($policyOrder); $panel = (string) ob_get_clean();
+    // Buyers raise problems on the claim page now; the policy is stated there.
+    ob_start(); MK\Report\ClaimPage::render(); $form = (string) ob_get_clean();
     wp_set_current_user(0);
 
+    check('注文画面でも購入者都合では返金しないと明記している',
+        str_contains($panel, 'ご都合による返品・返金はお受けしておりません'));
     check('購入者都合では返金しないと明記している',
         str_contains($form, 'ご都合による返品・返金はお受けしておりません'));
     check('具体例まで書いてある', str_contains($form, '気が変わった'));
@@ -3381,6 +3385,208 @@ $guidelinePage = get_page_by_path('guideline');
 check('ガイドラインのページが公開されている', $guidelinePage && $guidelinePage->post_status === 'publish');
 ob_start(); MK\Product\FormGuide::guidelineNotice(); $guidelineNotice = (string) ob_get_clean();
 check('出品画面からガイドラインへ案内', $guidelinePage && str_contains($guidelineNotice, (string) get_permalink($guidelinePage)));
+
+echo "\n=== 運営への申し出 ===\n";
+
+$RS = MK\Report\Service::class;
+$CP = MK\Report\ClaimPage::class;
+$CF = MK\Report\ClaimFiles::class;
+$J  = MK\Schedule\Jobs::class;
+
+check('申し出の内容はご指定の7項目', array_values($RS::claimCategories()) === [
+    '商品の未着', '商品説明や掲載内容との相違', 'その他取引上の問題', '返品・返金について',
+    'キャンセルについて', 'デジタルコンテンツに関する問題', 'その他',
+]);
+check('申し出の内容はすべて通報として登録できる', array_diff_key($RS::claimCategories(), $RS::reasons()) === []);
+check('LINEの入口から申し出ページへ', MK\Line\Links::resolve('claim', 1) === $CP::url());
+check('LINEの入口：未ログインはログイン画面へ', MK\Line\Links::resolve('claim', 0) === wc_get_page_permalink('myaccount'));
+check('マイアカウントの注文履歴の次に申し出', array_keys($CP::addMenuItem(['dashboard' => '', 'orders' => '', 'customer-logout' => '']))
+    === ['dashboard', 'orders', $CP::ENDPOINT, 'customer-logout']);
+
+add_filter('mk_should_notify', '__return_false', 99);
+
+$claimBuyer = wp_insert_user(['user_login' => 'mk_smoke_claim_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+$otherBuyer = wp_insert_user(['user_login' => 'mk_smoke_claim2_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+$claimOrders = [];
+$makeClaimOrder = static function (int $buyer, string $status) use (&$claimOrders): int {
+    $o = wc_create_order(['customer_id' => $buyer]);
+    $o->update_meta_data('_mk_title_snapshot', 'smoke claim item');
+    $o->set_status($status);
+    $o->save();
+    $claimOrders[] = $o->get_id();
+
+    return $o->get_id();
+};
+
+$pngPath = tempnam(sys_get_temp_dir(), 'mkc');
+file_put_contents($pngPath, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='));
+$fakePath = tempnam(sys_get_temp_dir(), 'mkc');
+file_put_contents($fakePath, '<?php echo "not an image";');
+
+$filesOf = static fn (array $paths, array $names): array => [
+    'name' => $names, 'tmp_name' => $paths,
+    'size' => array_map(static fn ($p): int => (int) filesize($p), $paths),
+    'error' => array_fill(0, count($paths), UPLOAD_ERR_OK),
+];
+
+if (!is_wp_error($claimBuyer) && !is_wp_error($otherBuyer)) {
+    $paidOrder      = $makeClaimOrder($claimBuyer, MK\Order\Statuses::PAID);
+    $secondOrder    = $makeClaimOrder($claimBuyer, MK\Order\Statuses::SHIPPED);
+    $pendingOrder   = $makeClaimOrder($claimBuyer, 'pending');
+    $cancelledOrder = $makeClaimOrder($claimBuyer, 'cancelled');
+    $strangerOrder  = $makeClaimOrder($otherBuyer, MK\Order\Statuses::PAID);
+
+    $eligibleIds = array_map(static fn ($o): int => $o->get_id(), $CP::eligibleOrders($claimBuyer));
+    check('支払い後の注文を選べる', in_array($paidOrder, $eligibleIds, true) && in_array($secondOrder, $eligibleIds, true));
+    check('未払い・キャンセル済み・他人の注文は選べない',
+        !in_array($pendingOrder, $eligibleIds, true) && !in_array($cancelledOrder, $eligibleIds, true) && !in_array($strangerOrder, $eligibleIds, true));
+
+    $good = ['mk_claim_order' => (string) $paidOrder, 'mk_claim_category' => 'not_arrived', 'mk_claim_detail' => '発送連絡から10日経っても届きません。'];
+    check('正しい申し出は受け付ける', $CP::problems($claimBuyer, $good, []) === [], implode(' / ', $CP::problems($claimBuyer, $good, [])));
+    check('他人の注文では申し出できない',
+        in_array('申し出の対象となる注文を選んでください。', $CP::problems($claimBuyer, ['mk_claim_order' => (string) $strangerOrder] + $good, []), true));
+    $missing = $CP::problems($claimBuyer, ['mk_claim_order' => (string) $paidOrder], []);
+    check('内容と詳細は必須', in_array('申し出の内容を選んでください。', $missing, true) && in_array('詳細を入力してください。', $missing, true));
+    check('画像以外のファイルは受け付けない', $CF::problems($filesOf([$fakePath], ['photo.png'])) !== []);
+    check('画像は3枚まで', $CF::problems($filesOf([$pngPath, $pngPath, $pngPath, $pngPath], ['1.png', '2.png', '3.png', '4.png'])) === ['添付できる画像は3枚までです。']);
+    check('画像を選ばなくても申し出できる', $CF::problems(['name' => [''], 'tmp_name' => [''], 'size' => [0], 'error' => [UPLOAD_ERR_NO_FILE]]) === []);
+
+    as_schedule_single_action(time() + DAY_IN_SECONDS, $J::EXECUTE_TRANSFER, ['order_id' => $paidOrder], 'mk-marketplace');
+    $claimReport = $CP::submit($claimBuyer, $good, $filesOf([$pngPath, $pngPath], ['a.png', 'b.png']), false);
+
+    check('申し出が運営の確認待ちとして登録される', $claimReport > 0 && (new $RS())->openCountFor($RS::TARGET_ORDER, $paidOrder) === 1);
+    check('申し出で売上金の支払いを保留（第17条）',
+        wc_get_order($paidOrder)->get_meta($RS::ORDER_FLAG) === 'yes'
+        && !as_next_scheduled_action($J::EXECUTE_TRANSFER, ['order_id' => $paidOrder], 'mk-marketplace'));
+
+    $claimNames = $CF::namesFor(wc_get_order($paidOrder), $claimReport);
+    check('画像を公開領域の外に保存', count($claimNames) === 2 && $CF::pathFor($claimNames[0]) !== ''
+        && !str_starts_with($CF::pathFor($claimNames[0]), untrailingslashit(ABSPATH)));
+    check('画像の任意パスは参照させない', $CF::pathFor('../../wp-config.php') === '');
+    check('同じ注文への重ねての申し出は受け付けない',
+        in_array('この注文については、すでに申し出を受け付けています。運営の確認をお待ちください。', $CP::problems($claimBuyer, $good, []), true));
+
+    wp_set_current_user($claimBuyer);
+    ob_start(); MK\Report\Frontend::render(wc_get_order($secondOrder)); $orderPanel = (string) ob_get_clean();
+    ob_start(); $CP::render(); $claimPageHtml = (string) ob_get_clean();
+    wp_set_current_user(0);
+    check('注文画面から、その注文を選んだ申し出ページへ', str_contains($orderPanel, esc_url($CP::url($secondOrder))) && !str_contains($orderPanel, 'mk_report_reason'));
+    check('申し出ページに履歴と画像添付欄', str_contains($claimPageHtml, 'これまでの申し出') && str_contains($claimPageHtml, 'name="mk_claim_files[]"'));
+
+    (new $RS())->resolve($claimReport, 1, 'smoke', false);
+
+    foreach ($claimNames as $name) {
+        @unlink($CF::pathFor($name));
+    }
+
+    global $wpdb;
+    $wpdb->delete($wpdb->prefix . 'mk_reports', ['id' => $claimReport], ['%d']);
+}
+
+foreach ($claimOrders as $id) {
+    foreach ([$J::AUTO_COMPLETE, $J::EXECUTE_TRANSFER, $J::MASK_ADDRESS, $J::DISPATCH_OVERDUE] as $hook) {
+        as_unschedule_all_actions($hook, ['order_id' => $id], 'mk-marketplace');
+    }
+    if ($o = wc_get_order($id)) { $o->delete(true); }
+}
+
+require_once ABSPATH . 'wp-admin/includes/user.php';
+foreach ([$claimBuyer, $otherBuyer] as $u) {
+    if (!is_wp_error($u)) { wp_delete_user($u); }
+}
+
+echo "\n=== 退会（第9条） ===\n";
+
+$W = MK\Account\Withdrawal::class;
+
+check('マイアカウントのログアウトの前に退会', array_keys($W::addMenuItem(['dashboard' => '', 'customer-logout' => '']))
+    === ['dashboard', $W::ENDPOINT, 'customer-logout']);
+
+$wBuyer   = wp_insert_user(['user_login' => 'mk_smoke_wb_' . wp_rand(1000, 9999), 'user_pass' => 'WithdrawTest!123', 'user_email' => 'mk-smoke-wb-' . wp_rand(1000, 9999) . '@example.com', 'role' => 'customer']);
+$wCreator = wp_insert_user(['user_login' => 'mk_smoke_wc_' . wp_rand(1000, 9999), 'user_pass' => wp_generate_password(24), 'user_email' => 'mk-smoke-wc-' . wp_rand(1000, 9999) . '@example.com', 'role' => 'seller']);
+$wOrders  = [];
+$wProduct = 0;
+
+if (!is_wp_error($wBuyer) && !is_wp_error($wCreator)) {
+    check('取引のない会員は退会できる', $W::blockers($wBuyer) === []);
+
+    $wo = wc_create_order(['customer_id' => $wBuyer]);
+    $wo->update_meta_data('_mk_creator_id', $wCreator);
+    $wo->set_status(MK\Order\Statuses::PAID);
+    $wo->save();
+    $wOrders[] = $wo->get_id();
+
+    $buyerBlocks = $W::blockers($wBuyer);
+    check('取引中の購入者は退会できない', $buyerBlocks !== [] && str_contains(implode('', $buyerBlocks), 'お届け・受取が完了していないご注文'));
+    check('未発送の注文があるクリエイターは退会できない', str_contains(implode('', $W::blockers($wCreator)), '発送（提供）が完了していない注文'));
+
+    $setStatus = static function (int $id, string $status): void {
+        $o = wc_get_order($id);
+        $o->set_status($status);
+        $o->save();
+    };
+
+    $setStatus($wo->get_id(), MK\Order\Statuses::SHIPPED);
+    check('受取確認前はクリエイターも退会できない', str_contains(implode('', $W::blockers($wCreator)), '受取確認が完了していない'));
+
+    $setStatus($wo->get_id(), MK\Order\Statuses::RECEIVED);
+    check('受取確認後は購入者として退会できる', $W::blockers($wBuyer) === []);
+    check('売上金の支払い前はクリエイターは退会できない', str_contains(implode('', $W::blockers($wCreator)), '売上金の支払い手続き'));
+
+    $setStatus($wo->get_id(), 'completed');
+    check('取引が完了すればクリエイターも退会できる', $W::blockers($wCreator) === [], implode(' / ', $W::blockers($wCreator)));
+
+    (new MK\Ledger\Recorder())->record($wCreator, null, MK\Ledger\Recorder::DEBT_INCURRED, 500, 500, null, 'smoke');
+    check('未回収額が残っていると退会できない', str_contains(implode('', $W::blockers($wCreator)), '未回収額'));
+    $wpdb->delete($wpdb->prefix . 'mk_creator_ledger', ['user_id' => $wCreator], ['%d']);
+    $wpdb->delete($wpdb->prefix . 'mk_creator_balances', ['user_id' => $wCreator], ['%d']);
+    check('未回収額が精算されれば退会できる', $W::blockers($wCreator) === []);
+
+    $openedReport = (new $RS())->open($wBuyer, $RS::TARGET_ORDER, $wo->get_id(), 'refund', 'smoke');
+    check('運営が確認中の申し出があると退会できない',
+        str_contains(implode('', $W::blockers($wBuyer)), '運営が確認中') && str_contains(implode('', $W::blockers($wCreator)), '運営が確認中'));
+    (new $RS())->resolve($openedReport, 1, 'smoke', false);
+    $wpdb->delete($wpdb->prefix . 'mk_reports', ['id' => $openedReport], ['%d']);
+    check('申し出の対応が終われば退会できる', $W::blockers($wBuyer) === []);
+
+    $product = new WC_Product_Simple();
+    $product->set_name('smoke withdraw listing');
+    $product->set_regular_price('1000');
+    $product->save();
+    $wProduct = $product->get_id();
+    $wpdb->update($wpdb->posts, ['post_author' => $wCreator, 'post_status' => 'publish'], ['ID' => $wProduct]);
+    clean_post_cache($wProduct);
+
+    $creatorEmail = get_userdata($wCreator)->user_email;
+    $W::withdraw($wCreator);
+    clean_user_cache($wCreator);
+
+    check('退会すると出品は非公開', get_post_status($wProduct) === 'draft');
+    check('退会後も取引記録は残る', wc_get_order($wo->get_id()) instanceof WC_Order && get_userdata($wCreator) instanceof WP_User);
+    check('元のメールアドレスを記録として保存', get_user_meta($wCreator, $W::META_EMAIL, true) === $creatorEmail);
+    check('同じメールアドレスで再登録できる', !email_exists($creatorEmail));
+
+    $buyerLogin = get_userdata($wBuyer)->user_login;
+    $W::withdraw($wBuyer);
+    clean_user_cache($wBuyer);
+    check('退会後はログインできない', is_wp_error(wp_authenticate($buyerLogin, 'WithdrawTest!123')));
+    check('退会後はパスワード再設定もできない', !apply_filters('allow_password_reset', true, $wBuyer));
+}
+
+foreach ($wOrders as $id) {
+    foreach ([$J::AUTO_COMPLETE, $J::EXECUTE_TRANSFER, $J::MASK_ADDRESS, $J::DISPATCH_OVERDUE] as $hook) {
+        as_unschedule_all_actions($hook, ['order_id' => $id], 'mk-marketplace');
+    }
+    if ($o = wc_get_order($id)) { $o->delete(true); }
+}
+if ($wProduct) { wp_delete_post($wProduct, true); }
+foreach ([$wBuyer, $wCreator] as $u) {
+    if (!is_wp_error($u)) { wp_delete_user($u); }
+}
+@unlink($pngPath);
+@unlink($fakePath);
+remove_filter('mk_should_notify', '__return_false', 99);
 
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();

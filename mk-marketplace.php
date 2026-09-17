@@ -140,6 +140,9 @@ add_action('plugins_loaded', static function (): void {
     Follow\Frontend::register();
     Message\Frontend::register();
     Report\Frontend::register();
+    Report\ClaimFiles::register();
+    Report\ClaimPage::register();
+    Account\Withdrawal::register();
     Report\Admin::register();
     Product\Statuses::register();
     Product\PublishGate::register();

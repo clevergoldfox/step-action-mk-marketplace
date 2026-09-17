@@ -62,7 +62,33 @@ final class Service
             'creator_declined' => 'クリエイターの辞退（依頼内容の確認）',
             'damaged'      => '商品が破損していた',
             'nuisance'     => '迷惑行為',
+            // The claim page's categories (ClaimPage), agreed 2026-09-19.
+            'trade_other'  => 'その他取引上の問題',
+            'refund'       => '返品・返金について',
+            'cancel'       => 'キャンセルについて',
+            'digital'      => 'デジタルコンテンツに関する問題',
             'other'        => 'その他',
+        ];
+    }
+
+    /**
+     * What a buyer chooses from on the claim page, in the client's order and
+     * wording. Keys are reasons(), so a claim is an ordinary report: it holds
+     * the payout, appears in the operator's queue, and a not-as-described
+     * claim counts as the creator's side exactly as before.
+     *
+     * @return array<string, string>
+     */
+    public static function claimCategories(): array
+    {
+        return [
+            'not_arrived'      => '商品の未着',
+            'not_as_described' => '商品説明や掲載内容との相違',
+            'trade_other'      => 'その他取引上の問題',
+            'refund'           => '返品・返金について',
+            'cancel'           => 'キャンセルについて',
+            'digital'          => 'デジタルコンテンツに関する問題',
+            'other'            => 'その他',
         ];
     }
 

@@ -67,6 +67,7 @@ final class Links
             'payouts' => ['label' => '売上・受取設定',            'login' => true],
             'mypage'  => ['label' => 'マイページ',               'login' => false],
             'orders'  => ['label' => '購入履歴・取引メッセージ',   'login' => true],
+            'claim'   => ['label' => '運営への申し出',             'login' => true],
         ];
     }
 
@@ -118,6 +119,7 @@ final class Links
             'payouts'       => $isSeller ? dokan_get_navigation_url(Onboarding::PAGE) : $becomeSeller,
             'mypage'        => $account,
             'orders'        => wc_get_account_endpoint_url('orders'),
+            'claim'         => \MK\Report\ClaimPage::url(),
         };
     }
 

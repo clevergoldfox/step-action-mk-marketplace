@@ -117,7 +117,7 @@ final class Admin
             printf('<td>%d</td>', (int) $r->id);
             printf('<td>%s</td>', self::targetCell($r));
             printf('<td>%s</td>', esc_html(Service::reasonLabel((string) $r->reason)));
-            printf('<td>%s</td>', $r->comment ? nl2br(esc_html((string) $r->comment)) : '—');
+            printf('<td>%s%s</td>', $r->comment ? nl2br(esc_html((string) $r->comment)) : '—', self::attachmentLinks($r));
             printf('<td>%s</td>', esc_html($reporter ? $reporter->display_name : '#' . $r->reporter_id));
             printf('<td>%s</td>', esc_html(get_date_from_gmt((string) $r->created_at, 'Y-m-d H:i')));
 
@@ -135,6 +135,33 @@ final class Admin
         }
 
         echo '</tbody></table></div>';
+    }
+
+    /** Photos attached on the claim page, opened through the private handler. */
+    private static function attachmentLinks(object $r): string
+    {
+        if ($r->target_type !== Service::TARGET_ORDER) {
+            return '';
+        }
+
+        $order = wc_get_order((int) $r->target_id);
+        $names = $order instanceof \WC_Order ? ClaimFiles::namesFor($order, (int) $r->id) : [];
+
+        if ($names === []) {
+            return '';
+        }
+
+        $links = [];
+
+        foreach (array_keys($names) as $index) {
+            $links[] = sprintf(
+                '<a href="%s" target="_blank" rel="noopener">画像%d</a>',
+                esc_url(ClaimFiles::adminUrl((int) $r->id, (int) $index)),
+                $index + 1
+            );
+        }
+
+        return '<br><small>添付：' . implode(' ', $links) . '</small>';
     }
 
     private static function targetCell(object $r): string

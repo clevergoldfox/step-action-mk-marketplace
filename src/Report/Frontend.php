@@ -77,22 +77,21 @@ final class Frontend
         echo '<section class="mk-report"><h2>この取引に問題がありますか？</h2>';
 
         if ($isBuyer) {
-            // The policy, before the form rather than after the request. A
-            // buyer who reads this and closes the page has been served better
-            // than one who fills in a form that was never going to succeed.
-            echo '<div class="mk-report__policy">'
-                . '<p><strong>お客様のご都合による返品・返金はお受けしておりません。</strong><br>'
-                . '「イメージと違った」「サイズが合わなかった」「思っていた状態と違った」'
-                . '「間違えて購入した」「気が変わった」といった理由では、'
-                . 'キャンセル・ご返金はいたしかねます。'
-                . '一点物の中古品を個人間でお取引いただく性質上、何卒ご了承ください。</p>'
-                . '<p>ただし、<strong>出品内容と実際の商品に明らかな相違がある場合</strong>は、'
-                . '下記より運営へお申し出ください。運営が内容を確認のうえ、'
-                . '返品・ご返金の可否を判断いたします。</p>'
-                . '</div>';
+            // Buyers raise problems on the claim page, where photos can be
+            // attached and the categories are the ones in the terms. This
+            // order is chosen there already.
+            echo '<p>商品の未着や、商品説明との相違など、この取引に問題がある場合は、運営へお申し出ください。'
+                . '<strong>運営による確認が完了するまで、出品者への売上金の支払いは保留されます。</strong></p>'
+                . '<p class="mk-report__note">お客様のご都合による返品・返金はお受けしておりません。</p>';
 
-            echo '<p>お申し出をいただくと、<strong>運営が確認を終えるまで出品者への送金は保留されます。</strong>'
-                . 'お手元に商品がある場合は、状態がわかるお写真を撮ってお待ちください。</p>';
+            printf(
+                '<p><a href="%s" class="button">運営に申し出る</a></p>',
+                esc_url(ClaimPage::url($order->get_id()))
+            );
+
+            echo '</section>';
+
+            return;
         } else {
             echo '<p>購入者との間で問題がございましたら、下記より運営へご連絡ください。'
                 . '<strong>ご連絡いただくと、運営が確認するまでこの取引の送金は保留されます。</strong></p>';
