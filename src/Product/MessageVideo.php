@@ -297,6 +297,9 @@ final class MessageVideo
         echo '</select>';
         echo '<small>購入代金の支払いが確認できた日から数えます。期限を過ぎると、購入者がキャンセルを申請できます。</small></p>';
 
+        echo '<p class="mk-field-help">デジタルコンテンツを販売する際の出品画像等は、ご自身で編集・作成したうえで、'
+            . '通常の商品の出品と同様に、上記の画像アップロード欄からアップロードしてください。</p>';
+
         echo '<p class="mk-field-help">動画の内容は「商品の詳しい説明」に、価格は「価格」欄にご入力ください。'
             . '撮影した動画は、ご自身のVimeoアカウントに<strong>限定公開</strong>でアップロードし、'
             . '取引画面からURLを送信していただきます。</p>';
@@ -468,11 +471,17 @@ final class MessageVideo
         $html .= '<p class="mk-video-request__title">メッセージの種類を選んでください<span class="required">*</span></p>';
         $html .= '<ul class="mk-video-request__types">';
 
+        // One type on offer is not a choice. Left unticked it is a required
+        // radio nobody reads as a question, and the buyer meets a browser
+        // message about "options" on a form that shows none (2026-09-18).
+        $only = count($types) === 1;
+
         foreach ($types as $key => $type) {
             $html .= sprintf(
-                '<li><label><input type="radio" name="mk_message_type" value="%s" required disabled data-mk-requires-agree> '
+                '<li><label><input type="radio" name="mk_message_type" value="%s"%s required disabled data-mk-requires-agree> '
                 . '<strong>%s</strong><small>%s</small></label></li>',
                 esc_attr($key),
+                $only ? ' checked' : '',
                 esc_html($type['label']),
                 esc_html($type['description'])
             );
@@ -499,19 +508,48 @@ final class MessageVideo
         $html .= '<p class="mk-video-request__locked">上の注意事項に同意すると、ご依頼内容を入力できます。</p>';
         $html .= '</fieldset>';
 
+        $html .= '<p class="mk-video-request__error" role="alert" hidden></p>';
         $html .= '<p class="mk-video-request__note">動画はクリエイターが撮影後、取引画面からお届けします。</p>';
 
         $html .= '</div>';
 
         // Disabled fields are not submitted and do not validate, so they are
         // unlocked on the tick rather than merely made to look active.
+        //
+        // The browser's own wording for a missing choice is about "options",
+        // which on this form means the gift options of a physical item -- it
+        // sent a buyer looking for a field that is not there. Each field says
+        // in its own words what it wants instead. Every message is cleared on
+        // the next edit: a custom one sticks until it is, and a stale one
+        // would block a form the buyer has since filled in correctly.
         $html .= '<script>(function(){'
             . 'var box=document.getElementById("mk_request_agree");if(!box){return;}'
+            . 'var form=box.form;'
             . 'var fields=document.querySelectorAll("[data-mk-requires-agree]");'
             . 'var note=document.querySelector(".mk-video-request__locked");'
             . 'function sync(){Array.prototype.forEach.call(fields,function(f){f.disabled=!box.checked;});'
             . 'if(note){note.hidden=box.checked;}}'
-            . 'box.addEventListener("change",sync);sync();'
+            . 'box.addEventListener("change",sync);'
+            // Coming back with the browser's Back button restores the tick
+            // without firing change, and the fields would stay locked.
+            . 'window.addEventListener("pageshow",sync);sync();'
+            . 'var box2=document.querySelector(".mk-video-request__error");'
+            . 'if(!form||!box2){return;}'
+            // required stays in the markup for a browser without this script;
+            // with it, the page says which field is missing, in its own words.
+            . 'form.noValidate=true;'
+            . 'function fail(e,field,message){e.preventDefault();box2.textContent=message;box2.hidden=false;'
+            . 'if(field){field.focus();}}'
+            . 'form.addEventListener("submit",function(e){'
+            . 'box2.hidden=true;box2.textContent="";'
+            . 'if(!box.checked){fail(e,box,"ご依頼前の注意事項をご確認のうえ、同意のチェックを入れてください。");return;}'
+            . 'var types=form.querySelectorAll("[name=\'mk_message_type\']");'
+            . 'if(types.length&&!form.querySelector("[name=\'mk_message_type\']:checked")){'
+            . 'fail(e,types[0],"メッセージの種類を選んでください。");return;}'
+            . 'var name=document.getElementById("mk_request_name");'
+            . 'if(name&&!name.value.replace(/^\s+|\s+$/g,"")){'
+            . 'fail(e,name,"呼んでほしいお名前を入力してください。");return;}'
+            . '});'
             . '})();</script>';
 
         return $html;

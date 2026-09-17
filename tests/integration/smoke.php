@@ -2189,6 +2189,25 @@ if (!$videoSeller || !$videoBuyer) {
     check('同意するまで依頼欄は操作できない', substr_count($buyForm, 'disabled data-mk-requires-agree') >= 3,
         (string) substr_count($buyForm, 'disabled data-mk-requires-agree'));
     check('動画にはオプションを出さない', !str_contains($buyForm, 'mk_options[]'));
+    check('種類が複数あるときは選ばれていない', !str_contains($buyForm, 'checked required disabled'));
+    check('足りない項目は日本語で伝える',
+        str_contains($buyForm, 'mk-video-request__error')
+        && str_contains($buyForm, 'メッセージの種類を選んでください。')
+        && str_contains($buyForm, '呼んでほしいお名前を入力してください。'));
+    check('ブラウザ任せの「オプション」表示は使わない', str_contains($buyForm, 'form.noValidate=true;'));
+    check('戻るボタンで入力欄が固まらない', str_contains($buyForm, 'pageshow'));
+
+    // 種類が1つだけの出品は、選択肢ではなく確認事項。最初から選んでおく。
+    update_post_meta($videoId, MK\Product\MessageVideo::META_TYPES, ['birthday']);
+    $soleForm = MK\Product\MessageVideo::renderBuyFields($videoId);
+    check('種類が1つなら最初から選ばれている',
+        str_contains($soleForm, 'value="birthday" checked required disabled'));
+    update_post_meta($videoId, MK\Product\MessageVideo::META_TYPES, ['birthday', 'cheer']);
+
+    ob_start(); MK\Product\MessageVideo::renderFields(null, $videoId); $videoFields = (string) ob_get_clean();
+    check('出品画面で出品画像の作成方法を案内する',
+        str_contains($videoFields, 'デジタルコンテンツを販売する際の出品画像等')
+        && str_contains($videoFields, '上記の画像アップロード欄からアップロードしてください'));
 
     echo "\n=== メッセージ動画：注文・送信・辞退 ===\n";
 
