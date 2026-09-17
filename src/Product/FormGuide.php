@@ -294,11 +294,14 @@ final class FormGuide
         [$class, $heading, $body, $link] = self::statusMessage($product->post_status, $productId);
 
         printf(
-            '<div class="dokan-alert %s mk-saved"><strong>%s</strong><br>%s%s</div>',
+            '<div class="dokan-alert %s mk-saved"><strong>%s</strong><br>%s%s%s</div>',
             esc_attr($class),
             esc_html($heading),
             $body,
-            $link
+            $link,
+            // Straight from here to TikTok or Instagram once it is public; a
+            // draft says nothing, a listing awaiting approval says when.
+            $product->post_status === 'draft' ? '' : ShareLink::buttons($productId)
         );
     }
 

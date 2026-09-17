@@ -3659,6 +3659,49 @@ if (!is_wp_error($suspendUser)) {
 
 remove_filter('mk_should_notify', '__return_false', 99);
 
+echo "\n=== 商品リンクをコピー ===\n";
+
+$SL = MK\Product\ShareLink::class;
+
+$shareProduct = new WC_Product_Simple();
+$shareProduct->set_name('スモーク シェアテスト');
+$shareProduct->set_regular_price('1000');
+$shareProduct->save();
+$shareId = $shareProduct->get_id();
+
+$setShareStatus = static function (string $status) use ($shareId): void {
+    global $wpdb;
+    $wpdb->update($wpdb->posts, ['post_status' => $status], ['ID' => $shareId]);
+    clean_post_cache($shareId);
+};
+
+check('短い商品URL /item/{ID}/', $SL::url($shareId) === home_url('/item/' . $shareId . '/'));
+
+$setShareStatus('publish');
+$shareHtml = $SL::buttons($shareId);
+check('公開中は商品ページにコピーボタン', str_contains($shareHtml, '商品リンクをコピー') && str_contains($shareHtml, 'data-url="' . esc_attr($SL::url($shareId)) . '"'));
+check('スマホ用の共有ボタンも用意', str_contains($shareHtml, 'mk-share__native'));
+check('出品者の商品一覧用は短い表記', str_contains($SL::buttons($shareId, true), '>リンクをコピー<'));
+
+$setShareStatus(MK\Product\Statuses::RESERVED);
+check('購入手続き中の商品もシェアできる', $SL::isShareable($shareId));
+
+$setShareStatus('pending');
+check('審査中は「公開後にリンクをコピーできます」', str_contains($SL::buttons($shareId), '公開後にリンクをコピーできます') && !str_contains($SL::buttons($shareId), 'data-url'));
+
+$setShareStatus('draft');
+check('下書きもリンクを出さない', !$SL::isShareable($shareId) && !str_contains($SL::buttons($shareId), 'data-url'));
+
+$wpNotFound = new WP();
+$wpNotFound->request = 'item/' . $shareId;
+$SL::route($wpNotFound);
+check('公開前の商品の短いURLは404', ($wpNotFound->query_vars['error'] ?? '') === '404');
+
+$setShareStatus(MK\Product\Statuses::SOLD);
+check('売り切れの商品にはボタンを出さない', $SL::buttons($shareId) === '');
+
+wp_delete_post($shareId, true);
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');

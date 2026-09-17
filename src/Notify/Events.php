@@ -103,12 +103,14 @@ final class Events
                 subject: '商品が公開されました',
                 body: sprintf(
                     "出品された商品が承認され、公開されました。\n\n"
-                    . "商品名：%s\n\n"
-                    . "購入者が商品ページを閲覧・購入できるようになりました。",
-                    $post->post_title
+                    . "商品名：%s\n商品リンク：%s\n\n"
+                    . "購入者が商品ページを閲覧・購入できるようになりました。\n"
+                    . "上記の商品リンクを、SNSやLINEでのシェアにご利用ください。",
+                    $post->post_title,
+                    \MK\Product\ShareLink::url($post->ID)
                 ),
                 short: sprintf('「%s」が公開されました。', $post->post_title),
-                url: (string) get_permalink($post->ID),
+                url: \MK\Product\ShareLink::url($post->ID),
                 context: ['product_id' => $post->ID],
             ));
         }
