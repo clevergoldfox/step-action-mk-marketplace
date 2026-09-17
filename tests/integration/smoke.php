@@ -3702,6 +3702,52 @@ check('売り切れの商品にはボタンを出さない', $SL::buttons($share
 
 wp_delete_post($shareId, true);
 
+echo "\n=== リンクのプレビュー（OGP） ===\n";
+
+$ogProduct = new WC_Product_Simple();
+$ogProduct->set_name('スモーク OGP ワンピース');
+$ogProduct->set_regular_price('4800');
+$ogProduct->set_short_description("<p>ヴィンテージの\nワンピースです。</p>");
+$ogProduct->save();
+$og = MK\Product\OpenGraph::forProduct($ogProduct->get_id());
+
+check('商品名がタイトル', ($og['og:title'] ?? '') === 'スモーク OGP ワンピース' && ($og['twitter:title'] ?? '') === 'スモーク OGP ワンピース');
+check('説明はタグと改行を除いた一文', ($og['og:description'] ?? '') === 'ヴィンテージの ワンピースです。', $og['og:description'] ?? '');
+check('種類は商品、価格は円', ($og['og:type'] ?? '') === 'product' && ($og['product:price:amount'] ?? '') === '4800' && ($og['product:price:currency'] ?? '') === 'JPY');
+check('URLは商品ページ', ($og['og:url'] ?? '') === get_permalink($ogProduct->get_id()));
+check('画像のない商品はサイトアイコンを使う', ($og['og:image'] ?? '') === (string) get_site_icon_url(512) && ($og['og:image'] ?? '') !== '');
+check('サイト名つき', ($og['og:site_name'] ?? '') === get_bloginfo('name'));
+
+$ogProduct->set_short_description('');
+$ogProduct->save();
+$ogBare = MK\Product\OpenGraph::forProduct($ogProduct->get_id());
+check('説明がなければ価格を使う', str_starts_with($ogBare['og:description'] ?? '', '¥4,800'), $ogBare['og:description'] ?? '');
+
+wp_delete_post($ogProduct->get_id(), true);
+
+$ogUploads = wp_get_upload_dir();
+$ogWebp    = $ogUploads['path'] . '/mk-smoke-og-' . wp_generate_password(6, false) . '.webp';
+$ogImage   = new Imagick();
+$ogImage->newImage(1600, 900, new ImagickPixel('#c9a14a'));
+$ogImage->setImageFormat('webp');
+$ogImage->writeImage($ogWebp);
+$ogImage->clear();
+$ogAttachment = wp_insert_attachment(['post_mime_type' => 'image/webp', 'post_title' => 'smoke og', 'post_status' => 'inherit'], $ogWebp);
+$ogJpeg = MK\Product\OpenGraph::jpegCopy((int) $ogAttachment);
+$ogJpegPath = is_array($ogJpeg) ? $ogUploads['basedir'] . '/' . get_post_meta($ogAttachment, MK\Product\OpenGraph::META_JPEG, true)['file'] : '';
+
+check('WebPの写真はプレビュー用にJPEGを作る', is_array($ogJpeg) && str_ends_with($ogJpeg[0], '-og.jpg') && is_readable($ogJpegPath) && wp_get_image_mime($ogJpegPath) === 'image/jpeg', is_array($ogJpeg) ? $ogJpeg[0] : 'null');
+check('大きな写真は1200pxに収める', is_array($ogJpeg) && $ogJpeg[1] === 1200 && $ogJpeg[2] === 675, is_array($ogJpeg) ? $ogJpeg[1] . 'x' . $ogJpeg[2] : '');
+check('2回目は作り直さず同じものを使う', MK\Product\OpenGraph::jpegCopy((int) $ogAttachment) === $ogJpeg);
+
+$ogPng = wp_insert_attachment(['post_mime_type' => 'image/png', 'post_title' => 'smoke og png', 'post_status' => 'inherit'], $ogWebp);
+check('JPEG・PNGはそのまま使う', MK\Product\OpenGraph::jpegCopy((int) $ogPng) === null);
+
+@unlink($ogJpegPath);
+wp_delete_attachment((int) $ogPng, true);
+wp_delete_attachment((int) $ogAttachment, true);
+@unlink($ogWebp);
+
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
 check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');

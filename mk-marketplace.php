@@ -131,6 +131,7 @@ add_action('plugins_loaded', static function (): void {
     Checkout\ShippingAddress::register();
     Product\Reviews::register();
     Product\ShareLink::register();
+    Product\OpenGraph::register();
     Account\Registration::register();
     Account\Terms::register();
     Account\TermsAdmin::register();
