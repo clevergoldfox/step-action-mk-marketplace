@@ -19,6 +19,11 @@ use Stripe\StripeClient;
  *   define('MK_STRIPE_SECRET_KEY',      'sk_test_...');
  *   define('MK_STRIPE_PUBLISHABLE_KEY', 'pk_test_...');
  *   define('MK_STRIPE_WEBHOOK_SECRET',  'whsec_...');
+ *
+ * Optional, for the second webhook destination that listens to creators'
+ * connected accounts (see webhookSecrets()):
+ *
+ *   define('MK_STRIPE_CONNECT_WEBHOOK_SECRET', 'whsec_...');
  */
 final class Client
 {
@@ -65,6 +70,31 @@ final class Client
     public static function webhookSecret(): string
     {
         return self::constant('MK_STRIPE_WEBHOOK_SECRET');
+    }
+
+    /**
+     * Every signing secret a delivery may legitimately carry.
+     *
+     * Stripe sends events about the platform's own account and events about
+     * creators' connected accounts through separate destinations, and each
+     * destination signs with its own secret. account.updated for a creator --
+     * the event that says their identity check has cleared and they can be
+     * paid -- only ever comes through the second. With one secret, that event
+     * was rejected, and a creator verified after leaving the onboarding page
+     * stayed "in progress" until they happened to come back (2026-09-19).
+     *
+     * @return array<int, string>
+     */
+    public static function webhookSecrets(): array
+    {
+        $secrets = [self::webhookSecret()];
+
+        if (defined('MK_STRIPE_CONNECT_WEBHOOK_SECRET') && is_string(MK_STRIPE_CONNECT_WEBHOOK_SECRET)
+            && MK_STRIPE_CONNECT_WEBHOOK_SECRET !== '') {
+            $secrets[] = MK_STRIPE_CONNECT_WEBHOOK_SECRET;
+        }
+
+        return array_values(array_unique(array_filter($secrets)));
     }
 
     /**

@@ -345,6 +345,37 @@ check('/mk/v1/stripe-webhook', isset($routes['/mk/v1/stripe-webhook']), $hook);
 // webhook silently never arrives in production.
 check('endpoint is https', str_starts_with($hook, 'https://'), $hook);
 
+echo "\n=== Webhook：クリエイターの口座用（Connect）の署名 ===\n";
+if (!defined('MK_STRIPE_CONNECT_WEBHOOK_SECRET')) {
+    define('MK_STRIPE_CONNECT_WEBHOOK_SECRET', 'whsec_smoke_' . wp_generate_password(24, false));
+}
+
+check('2つ目の署名シークレットを使う', in_array(MK_STRIPE_CONNECT_WEBHOOK_SECRET, MK\Stripe\Client::webhookSecrets(), true)
+    && count(MK\Stripe\Client::webhookSecrets()) === 2);
+
+$whEvent   = 'evt_smoke_' . wp_generate_password(12, false);
+$whPayload = (string) wp_json_encode([
+    'id'     => $whEvent,
+    'object' => 'event',
+    'type'   => 'mk.smoke_noop',   // どの処理にも当たらない種類
+    'data'   => ['object' => ['id' => 'noop', 'object' => 'noop']],
+]);
+$whSend = static function (string $secret) use ($whPayload): int {
+    $t   = time();
+    $req = new WP_REST_Request('POST', '/mk/v1/stripe-webhook');
+    $req->set_body($whPayload);
+    $req->set_header('content-type', 'application/json');
+    $req->set_header('stripe-signature', 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $whPayload, $secret));
+
+    return rest_do_request($req)->get_status();
+};
+
+check('Connect側の署名で届いた通知を受け付ける', ($s = $whSend(MK_STRIPE_CONNECT_WEBHOOK_SECRET)) === 200, (string) $s);
+check('どちらの署名でもない通知は拒否する', ($s = $whSend('whsec_not_ours')) === 400, (string) $s);
+
+global $wpdb;
+$wpdb->delete($wpdb->prefix . 'mk_webhook_events', ['event_id' => $whEvent], ['%s']);
+
 echo "\n=== fee calculation (live settings) ===\n";
 $b = MK\Fee\Calculator::fromSettings()->calculate(10000, 2000);
 check('total 12000', $b->total === 12000, (string) $b->total);

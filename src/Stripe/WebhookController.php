@@ -64,11 +64,7 @@ final class WebhookController
         $signature = $request->get_header('stripe_signature') ?? '';
 
         try {
-            $event = Webhook::constructEvent(
-                $payload,
-                $signature,
-                Client::webhookSecret()
-            );
+            $event = self::verify($payload, $signature);
         } catch (SignatureVerificationException $e) {
             /*
              * Say nothing in the RESPONSE, but always log it.
@@ -89,8 +85,9 @@ final class WebhookController
              */
             error_log(sprintf(
                 '[mk-marketplace] webhook signature rejected from %s: %s '
-                . '(if this repeats for every delivery, MK_STRIPE_WEBHOOK_SECRET '
-                . 'does not match the signing secret of the Stripe destination)',
+                . '(if this repeats for every delivery, MK_STRIPE_WEBHOOK_SECRET or '
+                . 'MK_STRIPE_CONNECT_WEBHOOK_SECRET does not match the signing secret '
+                . 'of the Stripe destination)',
                 $request->get_header('x_forwarded_for') ?: 'unknown',
                 $e->getMessage()
             ));
@@ -126,6 +123,29 @@ final class WebhookController
         }
 
         return new WP_REST_Response(['status' => 'ok'], 200);
+    }
+
+    /**
+     * Accept a delivery signed by any of our destinations.
+     *
+     * Tried in turn rather than chosen up front: nothing unsigned in the
+     * payload can be trusted to say which destination sent it.
+     *
+     * @throws SignatureVerificationException when no secret matches
+     */
+    private static function verify(string $payload, string $signature): \Stripe\Event
+    {
+        $last = null;
+
+        foreach (Client::webhookSecrets() as $secret) {
+            try {
+                return Webhook::constructEvent($payload, $signature, $secret);
+            } catch (SignatureVerificationException $e) {
+                $last = $e;
+            }
+        }
+
+        throw $last ?? SignatureVerificationException::factory('no signing secret configured', $payload, $signature);
     }
 
     /** @param object $object the Stripe object carried by the event */
