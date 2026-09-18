@@ -285,14 +285,45 @@ final class TransferService
      * would have received and for the fee their transaction caused, and the
      * platform absorbs its own margin rather than profiting from a chargeback.
      * That is a policy choice and the operator may want a different one.
+     *
+     * $chargeToCreator is that choice, made per chargeback: the rule is the
+     * creator's, and the exception is a chargeback our own system or our own
+     * mistake caused, which the platform pays for (2026-09-19).
      */
-    public function absorbDispute(WC_Order $order, int $disputeFee = 1500): void
+    public function absorbDispute(WC_Order $order, int $disputeFee = 1500, bool $chargeToCreator = true): void
     {
         $reversed = $this->pullBackTransfer($order);
 
-        $this->recordUnwind($order, $reversed, null, $disputeFee);
+        $this->recordUnwind($order, $reversed, null, $disputeFee, $chargeToCreator);
 
         $order->update_meta_data('_mk_has_open_report', 'yes');
+        $order->save();
+    }
+
+    /**
+     * Bring a refund made in the Stripe dashboard back into our books.
+     *
+     * The rule is that refunds are made here, where the transfer is pulled
+     * back, the ledger is written and the order moves (2026-09-19). Stripe's
+     * own dashboard obeys none of that: the buyer has their money, and this
+     * site would still show a live sale with a payout on its way.
+     *
+     * So the money is not moved again -- Stripe already moved it -- and only
+     * what we failed to do is done: the transfer comes back if it went out,
+     * and the cost of the refund is put on somebody.
+     */
+    public function reconcileExternalRefund(WC_Order $order, int $refundedAmount, bool $chargeToCreator = true): void
+    {
+        $reversed = $this->pullBackTransfer($order);
+
+        $this->recordUnwind($order, $reversed, null, 0, $chargeToCreator);
+
+        $order->update_meta_data(self::META_REFUND_AMOUNT, $refundedAmount);
+        $order->update_meta_data(self::META_COST_BEARER, $chargeToCreator ? 'creator' : 'platform');
+        $order->add_order_note(sprintf(
+            'Stripe の管理画面で行われた返金 %s を、サイト側の記録に反映しました。',
+            Money::format($refundedAmount)
+        ));
         $order->save();
     }
 
@@ -483,6 +514,14 @@ final class TransferService
      * the effective rate varies by card brand and by payment method (3.6% for
      * domestic cards, 3.98% for PayPay), and an estimate that is a few yen
      * out becomes an account that will not reconcile.
+     *
+     * A lookup that fails is worth nobody's refund. This is called from the
+     * middle of an unwind, after the buyer has been refunded and the transfer
+     * pulled back; throwing there would abandon the ledger entry for money
+     * that has already moved, and show the operator a failure for a refund
+     * that in fact succeeded. So the fee is dropped instead of the unwind,
+     * which errs towards not billing a creator for a number we could not
+     * read (2026-09-19).
      */
     public function stripeFeeFor(WC_Order $order): int
     {
@@ -492,10 +531,26 @@ final class TransferService
             return 0;
         }
 
-        $charge = Client::get()->charges->retrieve(
-            $chargeId,
-            ['expand' => ['balance_transaction']]
-        );
+        try {
+            $charge = Client::get()->charges->retrieve(
+                $chargeId,
+                ['expand' => ['balance_transaction']]
+            );
+        } catch (\Throwable $e) {
+            error_log(sprintf(
+                '[mk-marketplace] could not read the Stripe fee for order %d: %s',
+                $order->get_id(),
+                $e->getMessage()
+            ));
+
+            $order->add_order_note(
+                '⚠️ 決済手数料を Stripe から取得できませんでした。'
+                . '手数料は出品者に請求していません。必要に応じて Stripe の管理画面でご確認ください。'
+            );
+            $order->save();
+
+            return 0;
+        }
 
         return (int) ($charge->balance_transaction->fee ?? 0);
     }

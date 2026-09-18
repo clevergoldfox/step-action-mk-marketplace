@@ -24,6 +24,12 @@ final class PaymentService
     public const META_INTENT_ID = '_mk_stripe_payment_intent_id';
     public const META_CHARGE_ID = '_mk_stripe_charge_id';
 
+    /** Refund ids this site created, so a dashboard refund can be told apart. */
+    public const META_KNOWN_REFUNDS = '_mk_known_refund_ids';
+
+    /** When this site last began a refund, to date a webhook against it. */
+    public const META_REFUND_STARTED = '_mk_refund_started_at';
+
     /**
      * Create the PaymentIntent and snapshot the fee split onto the order.
      *
@@ -119,7 +125,26 @@ final class PaymentService
             $params['amount'] = Money::toStripeAmount($amount);
         }
 
-        return Client::get()->refunds->create($params)->id;
+        // Stamped before the call, not after: the refunded webhook can arrive
+        // while this request is still running, and Order\ExternalRefund uses
+        // the stamp to know that a refund it cannot yet recognise may still
+        // turn out to be ours.
+        $order->update_meta_data(self::META_REFUND_STARTED, time());
+        $order->save();
+
+        $refundId = Client::get()->refunds->create($params)->id;
+
+        // Every refund this site makes, by id. What Stripe reports and this
+        // list does not is a refund somebody made in the Stripe dashboard,
+        // which our books know nothing about.
+        $known   = $order->get_meta(self::META_KNOWN_REFUNDS);
+        $known   = is_array($known) ? $known : [];
+        $known[] = $refundId;
+
+        $order->update_meta_data(self::META_KNOWN_REFUNDS, array_values(array_unique($known)));
+        $order->save();
+
+        return $refundId;
     }
 
     private function creatorId(WC_Order $order): int

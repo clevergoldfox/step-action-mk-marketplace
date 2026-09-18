@@ -118,6 +118,8 @@ add_action('plugins_loaded', static function (): void {
     Order\Receipt::register();
     Order\DispatchDeadline::register();
     Order\CancelAdmin::register();
+    Order\Chargeback::register();
+    Order\ExternalRefund::register();
     Order\VideoDelivery::register();
     Order\DokanSync::register();
     Creator\Onboarding::register();

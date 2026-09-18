@@ -144,6 +144,11 @@ final class WebhookController
                 self::onDisputeOpened($object);
                 break;
 
+            case 'charge.dispute.closed':
+            case 'charge.dispute.updated':
+                self::onDisputeChanged($object);
+                break;
+
             case 'account.updated':
                 (new AccountService())->syncStatus($object->id);
                 break;
@@ -203,17 +208,11 @@ final class WebhookController
 
     private static function onDisputeOpened(object $dispute): void
     {
-        $orders = wc_get_orders([
-            'meta_key'   => PaymentService::META_CHARGE_ID,
-            'meta_value' => $dispute->charge,
-            'limit'      => 1,
-        ]);
+        $order = self::orderForDispute($dispute);
 
-        if (empty($orders)) {
+        if (!$order instanceof \WC_Order) {
             return;
         }
-
-        $order = $orders[0];
 
         // Stop the money before it leaves. A dispute raised while the transfer
         // is still queued is the cheapest possible moment to intervene: the
@@ -224,6 +223,45 @@ final class WebhookController
 
         Jobs::cancelTransfer($order->get_id());
         Jobs::cancelAutoComplete($order->get_id());
+
+        do_action('mk_dispute_opened', $order, $dispute);
+    }
+
+    /**
+     * The dispute moved on: the bank decided, or Stripe re-stated it.
+     *
+     * Opening one is not the end of it. A dispute lost is a sale the platform
+     * has paid for and must now put on somebody; a dispute won is a payout
+     * that was held for nothing and should be released. Neither happens by
+     * itself, and until this event was handled the operator had no way of
+     * learning which one it was except by looking in Stripe (2026-09-19).
+     */
+    private static function onDisputeChanged(object $dispute): void
+    {
+        $order = self::orderForDispute($dispute);
+
+        if (!$order instanceof \WC_Order) {
+            return;
+        }
+
+        do_action('mk_dispute_changed', $order, $dispute);
+    }
+
+    private static function orderForDispute(object $dispute): ?\WC_Order
+    {
+        $charge = (string) ($dispute->charge ?? '');
+
+        if ($charge === '') {
+            return null;
+        }
+
+        $orders = wc_get_orders([
+            'meta_key'   => PaymentService::META_CHARGE_ID,
+            'meta_value' => $charge,
+            'limit'      => 1,
+        ]);
+
+        return empty($orders) ? null : $orders[0];
     }
 
     private static function orderFor(object $intent): ?\WC_Order

@@ -809,6 +809,174 @@ if (is_wp_error($rpSeller) || is_wp_error($rpBuyer)) {
     check('report fixtures removed', !wc_get_order($roId) && !get_userdata($rpSeller));
 }
 
+echo "\n=== チャージバック（第16条7〜9項） ===\n";
+$cbSeller = wp_insert_user(['user_login' => 'mk_smoke_cb_s_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$cbBuyer  = wp_insert_user(['user_login' => 'mk_smoke_cb_b_' . wp_rand(1000,9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (is_wp_error($cbSeller) || is_wp_error($cbBuyer)) {
+    check('create chargeback fixtures', false, 'user creation failed');
+} else {
+    $muteCb = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteCb, 99);
+
+    $cbOrder = wc_create_order(['customer_id' => $cbBuyer, 'status' => 'pending']);
+    $cbOrder->update_meta_data('_mk_creator_id', $cbSeller);
+    $cbOrder->update_meta_data('_mk_product_amount', 5000);
+    $cbOrder->update_meta_data('_mk_option_amount', 0);
+    $cbOrder->update_meta_data(MK\Stripe\PaymentService::META_CHARGE_ID, 'ch_smoke_' . wp_rand(1000, 9999));
+    $cbOrder->save();
+    $cbId = $cbOrder->get_id();
+    $cbOrder->update_status(MK\Order\Statuses::RECEIVED, 'smoke');
+
+    check('送金は予約されている', as_has_scheduled_action('mk_execute_transfer', ['order_id' => $cbId], 'mk-marketplace'));
+
+    // Stripe の dispute オブジェクトの形だけを真似る。
+    $dispute = (object) [
+        'id'                   => 'dp_smoke_1',
+        'charge'               => (string) $cbOrder->get_meta(MK\Stripe\PaymentService::META_CHARGE_ID),
+        'amount'               => 5000,
+        'status'               => 'needs_response',
+        'balance_transactions' => [(object) ['fee' => 1500, 'amount' => -5000]],
+    ];
+
+    check('Stripeが知らせた手数料を使う', MK\Order\Chargeback::feeFrom($dispute) === 1500,
+        (string) MK\Order\Chargeback::feeFrom($dispute));
+    check('手数料が分からないときは1,500円', MK\Order\Chargeback::feeFrom((object) ['id' => 'dp_x']) === 1500);
+    check('状況は日本語で伝える',
+        str_contains(MK\Order\Chargeback::statusLabel('lost'), 'チャージバックが確定')
+        && str_contains(MK\Order\Chargeback::statusLabel('won'), '取り消され'));
+
+    MK\Order\Chargeback::record(wc_get_order($cbId), $dispute);
+    $cbOrder = wc_get_order($cbId);
+    check('チャージバックの内容を取引に記録する',
+        $cbOrder->get_meta(MK\Order\Chargeback::META_ID) === 'dp_smoke_1'
+        && (int) $cbOrder->get_meta(MK\Order\Chargeback::META_AMOUNT) === 5000
+        && (int) $cbOrder->get_meta(MK\Order\Chargeback::META_FEE) === 1500);
+
+    // 確定：代金はもう戻せない。誰の負担かを記録するだけ。
+    $dispute->status = 'lost';
+    MK\Order\Chargeback::onChanged(wc_get_order($cbId), $dispute);
+    $cbNotes = wc_get_order_notes(['order_id' => $cbId, 'limit' => 20]);
+    check('確定したら運営に対応を促す記録が残る',
+        (bool) array_filter($cbNotes, static fn ($n): bool => str_contains($n->content, 'チャージバックが確定しました')));
+
+    $cbLedger = new MK\Ledger\Recorder();
+    check('確定しただけでは請求しない', $cbLedger->outstanding($cbSeller) === 0,
+        (string) $cbLedger->outstanding($cbSeller));
+
+    // 原則どおりクリエイター負担で記録する（送金前なので巻き戻しはない）。
+    // 決済手数料は Stripe に問い合わせるが、このテストの取引は Stripe 上に存在
+    // しない。取得できなくても返金処理そのものは止まらない、という確認も兼ねる。
+    (new MK\Stripe\TransferService())->absorbDispute(wc_get_order($cbId), 1500, true);
+    check('手数料が取れなくても処理は止まらない', (bool) array_filter(
+        wc_get_order_notes(['order_id' => $cbId, 'limit' => 20]),
+        static fn ($n): bool => str_contains($n->content, '決済手数料を Stripe から取得できませんでした')
+    ));
+    check('クリエイター負担なら未回収額に載る', $cbLedger->outstanding($cbSeller) >= 1500,
+        (string) $cbLedger->outstanding($cbSeller));
+    check('チャージバック中は送金しない',
+        wc_get_order($cbId)->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
+
+    // 運営の過失なら、記録は残すがクリエイターには請求しない。
+    $cbOrder2 = wc_create_order(['customer_id' => $cbBuyer, 'status' => 'pending']);
+    $cbOrder2->update_meta_data('_mk_creator_id', $cbSeller);
+    $cbOrder2->update_meta_data('_mk_product_amount', 5000);
+    $cbOrder2->update_meta_data('_mk_option_amount', 0);
+    $cbOrder2->save();
+    $cbId2 = $cbOrder2->get_id();
+    $before = $cbLedger->outstanding($cbSeller);
+    (new MK\Stripe\TransferService())->absorbDispute(wc_get_order($cbId2), 1500, false);
+    check('運営負担ならクリエイターに請求しない', $cbLedger->outstanding($cbSeller) === $before,
+        $before . ' -> ' . $cbLedger->outstanding($cbSeller));
+
+    global $wpdb;
+    $absorbed = (int) $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM {$wpdb->prefix}mk_creator_ledger WHERE order_id = %d AND entry_type = %s",
+        $cbId2,
+        MK\Ledger\Recorder::PLATFORM_ABSORBED
+    ));
+    check('運営負担でも履歴には残る', $absorbed === 1, (string) $absorbed);
+
+    echo "\n=== Stripe管理画面で行われた返金 ===\n";
+
+    $exOrder = wc_create_order(['customer_id' => $cbBuyer, 'status' => 'pending']);
+    $exOrder->update_meta_data('_mk_creator_id', $cbSeller);
+    $exOrder->update_meta_data('_mk_product_amount', 4000);
+    $exOrder->update_meta_data('_mk_option_amount', 0);
+    $exCharge = 'ch_smoke_ext_' . wp_rand(1000, 9999);
+    $exOrder->update_meta_data(MK\Stripe\PaymentService::META_CHARGE_ID, $exCharge);
+    $exOrder->save();
+    $exId = $exOrder->get_id();
+    $exOrder->update_status(MK\Order\Statuses::RECEIVED, 'smoke');
+
+    check('送金は予約されている', as_has_scheduled_action('mk_execute_transfer', ['order_id' => $exId], 'mk-marketplace'));
+
+    // 当サイトが行った返金は、こちらが記録している。
+    $exOrder = wc_get_order($exId);
+    $exOrder->update_meta_data(MK\Stripe\PaymentService::META_KNOWN_REFUNDS, ['re_ours_1']);
+    $exOrder->save();
+
+    MK\Order\ExternalRefund::onCharge((object) [
+        'id'              => $exCharge,
+        'amount_refunded' => 4000,
+        'refunds'         => (object) ['data' => [(object) ['id' => 're_ours_1', 'amount' => 4000]]],
+    ]);
+    check('自分で行った返金は警告しない',
+        (int) wc_get_order($exId)->get_meta(MK\Order\ExternalRefund::META_AMOUNT) === 0);
+
+    // Stripe の画面から行われた返金。
+    MK\Order\ExternalRefund::onCharge((object) [
+        'id'              => $exCharge,
+        'amount_refunded' => 4000,
+        'refunds'         => (object) ['data' => [(object) ['id' => 're_dashboard_1', 'amount' => 4000]]],
+    ]);
+    $exOrder = wc_get_order($exId);
+    check('Stripe側の返金を見つける',
+        (int) $exOrder->get_meta(MK\Order\ExternalRefund::META_AMOUNT) === 4000,
+        (string) $exOrder->get_meta(MK\Order\ExternalRefund::META_AMOUNT));
+    check('見つけたらすぐ送金を止める',
+        !as_has_scheduled_action('mk_execute_transfer', ['order_id' => $exId], 'mk-marketplace')
+        && $exOrder->get_meta(MK\Report\Service::ORDER_FLAG) === 'yes');
+    check('運営に分かるよう取引に記録する', (bool) array_filter(
+        wc_get_order_notes(['order_id' => $exId, 'limit' => 20]),
+        static fn ($n): bool => str_contains($n->content, 'Stripe の管理画面で返金が行われました')
+    ));
+
+    // 返金した直後の通知は、自分の返金の記録が終わるまで判断を待つ。
+    $raceOrder = wc_create_order(['customer_id' => $cbBuyer, 'status' => 'pending']);
+    $raceOrder->update_meta_data('_mk_creator_id', $cbSeller);
+    $raceCharge = 'ch_smoke_race_' . wp_rand(1000, 9999);
+    $raceOrder->update_meta_data(MK\Stripe\PaymentService::META_CHARGE_ID, $raceCharge);
+    $raceOrder->update_meta_data(MK\Stripe\PaymentService::META_REFUND_STARTED, time());
+    $raceOrder->save();
+    $raceId = $raceOrder->get_id();
+
+    MK\Order\ExternalRefund::onCharge((object) [
+        'id'              => $raceCharge,
+        'amount_refunded' => 3000,
+        'refunds'         => (object) ['data' => [(object) ['id' => 're_unknown_yet', 'amount' => 3000]]],
+    ]);
+    check('返金直後は決めつけず、後で見直す',
+        (int) wc_get_order($raceId)->get_meta(MK\Order\ExternalRefund::META_AMOUNT) === 0
+        && wp_next_scheduled('mk_recheck_external_refund', [$raceId, $raceCharge]) > 0);
+
+    wp_unschedule_hook('mk_recheck_external_refund');
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $cbId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $exId], 'mk-marketplace');
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}mk_creator_ledger WHERE user_id = %d", $cbSeller));
+    $wpdb->delete($wpdb->prefix . 'mk_creator_balances', ['user_id' => $cbSeller], ['%d']);
+    wc_get_order($cbId)->delete(true);
+    wc_get_order($cbId2)->delete(true);
+    wc_get_order($exId)->delete(true);
+    wc_get_order($raceId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($cbSeller); wp_delete_user($cbBuyer);
+    remove_filter('mk_should_notify', $muteCb, 99);
+    check('チャージバックの後片付け', !wc_get_order($cbId) && !get_userdata($cbSeller));
+}
+
 echo "\n=== 取引メッセージ ===\n";
 $msSeller = wp_insert_user(['user_login' => 'mk_smoke_ms_s_' . wp_rand(1000,9999),
     'user_pass' => wp_generate_password(24), 'role' => 'seller']);
