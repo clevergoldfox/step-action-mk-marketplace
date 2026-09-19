@@ -357,7 +357,7 @@ final class PublishGate
             . '<p class="mk-onboard-callout__title">出品前に売上の受取設定を完了してください</p>'
             . '<p class="mk-onboard-callout__body">受取設定（本人確認・振込先口座の登録）が完了するまで、'
             . '<strong>出品（運営への審査申請）はできません</strong>。'
-            . 'Stripeの画面では、最後の「同意して送信」まで進めると設定が完了します。</p>'
+            . 'Stripeの画面では、最後の「同意して続行」まで進めると設定が完了します。</p>'
             . '<a class="mk-onboard-callout__button" href="%s">受取設定をする（約5分）</a>'
             . '</div>',
             esc_url(dokan_get_navigation_url(Onboarding::PAGE))
