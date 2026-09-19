@@ -67,6 +67,15 @@ final class PublishGate
     /** Release target for the save in flight; see META_RELEASE_TO. */
     private static string $releaseTo = '';
 
+    /** The form notice is hooked twice; the edit screen fires both. */
+    private static bool $formNoticeShown = false;
+
+    /**
+     * Shown when a creator presses 出品する before 受取設定 is complete, in the
+     * client's words (2026-09-19).
+     */
+    public const LOCKED_MESSAGE = '受取設定が完了していないため、出品できません。先に受取設定を完了してください。';
+
     public static function register(): void
     {
         add_filter('wp_insert_post_data', [self::class, 'gate'], 10, 2);
@@ -80,6 +89,7 @@ final class PublishGate
         // Until this was added, a creator could fill in an entire listing
         // without ever being told it could not go on sale.
         add_action('dokan_new_product_before_product_area', [self::class, 'formNotice']);
+        add_action('dokan_product_content_inside_area_before', [self::class, 'formNotice'], 5);
 
         add_action('admin_notices', [self::class, 'adminHeldNotice']);
     }
@@ -313,7 +323,7 @@ final class PublishGate
      * False for anyone who is not a creator, so the warnings below never
      * appear to the operator or to buyers.
      */
-    private static function mustOnboard(int $userId): bool
+    public static function mustOnboard(int $userId): bool
     {
         if ($userId === 0 || user_can($userId, 'manage_woocommerce')) {
             return false;
@@ -336,16 +346,18 @@ final class PublishGate
      */
     public static function formNotice(): void
     {
-        if (!self::mustOnboard(get_current_user_id())) {
+        if (self::$formNoticeShown || !self::mustOnboard(get_current_user_id())) {
             return;
         }
+
+        self::$formNoticeShown = true;
 
         printf(
             '<div class="mk-onboard-callout" role="alert">'
             . '<p class="mk-onboard-callout__title">出品前に売上の受取設定を完了してください</p>'
             . '<p class="mk-onboard-callout__body">受取設定（本人確認・振込先口座の登録）が完了するまで、'
-            . '商品は購入できる状態になりません。入力した内容は下書きとして保存され、'
-            . '設定が完了すると自動的に審査へ進みます。</p>'
+            . '<strong>出品（運営への審査申請）はできません</strong>。'
+            . 'Stripeの画面では、最後の「同意して送信」まで進めると設定が完了します。</p>'
             . '<a class="mk-onboard-callout__button" href="%s">受取設定をする（約5分）</a>'
             . '</div>',
             esc_url(dokan_get_navigation_url(Onboarding::PAGE))
@@ -361,9 +373,8 @@ final class PublishGate
 
         printf(
             '<div class="dokan-alert dokan-alert-warning">'
-            . '売上の受取設定が完了していないため、商品は公開されません。'
-            . '下書きとして保存されますので、<a href="%s">売上・受取設定</a>を完了してください。'
-            . '設定が完了すると、保留中の商品は自動的に審査（公開手続き）へ進みます。'
+            . '売上の受取設定が完了していないため、出品できません。'
+            . '<a href="%s">売上・受取設定</a>を完了してから出品してください。'
             . '</div>',
             esc_url(dokan_get_navigation_url(Onboarding::PAGE))
         );

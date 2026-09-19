@@ -423,6 +423,18 @@ final class Business
             }
         }
 
+        // Shown to buyers as the 特定商取引法 details, so held to the same
+        // standard as a creator's own name and phone (2026-09-19).
+        foreach ([
+            \MK\Account\ProfileChecks::nameProblem((string) ($data['representative'] ?? ''), '代表者名'),
+            \MK\Account\ProfileChecks::phoneProblem((string) ($data['phone'] ?? '')),
+            \MK\Account\ProfileChecks::addressProblem((string) ($data['address'] ?? '')),
+        ] as $problem) {
+            if ($problem !== null) {
+                $errors[] = $problem;
+            }
+        }
+
         $email = trim((string) ($data['email'] ?? ''));
 
         if ($email !== '' && !is_email($email)) {

@@ -1477,3 +1477,92 @@ msgstr "商品番号（SKU）は他の商品と重複しない番号をご入力
 
 msgid "Error"
 msgstr "エラー"
+
+# --- Registration (2026-09-19) ----------------------------------------------
+# The client's first live creator registration still met English: the form's
+# own validation messages (jQuery Validate, localised through Dokan), Dokan's
+# server-side registration errors, and the shop URL availability check.
+
+msgid "This field is required"
+msgstr "この項目は必須です"
+
+msgid "This field is required."
+msgstr "この項目は必須です。"
+
+msgid "Please fix this field."
+msgstr "この項目を修正してください。"
+
+msgid "Please enter a valid email address."
+msgstr "正しいメールアドレスを入力してください。"
+
+msgid "Please enter a valid URL."
+msgstr "正しいURLを入力してください。"
+
+msgid "Please enter a valid date."
+msgstr "正しい日付を入力してください。"
+
+msgid "Please enter a valid date (ISO)."
+msgstr "正しい日付を入力してください。"
+
+msgid "Please enter a valid number."
+msgstr "正しい数値を入力してください。"
+
+msgid "Please enter only digits."
+msgstr "数字のみで入力してください。"
+
+msgid "Please enter a valid credit card number."
+msgstr "正しいカード番号を入力してください。"
+
+msgid "Please enter the same value again."
+msgstr "同じ内容をもう一度入力してください。"
+
+msgid "Please enter no more than {0} characters."
+msgstr "{0}文字以内で入力してください。"
+
+msgid "Please enter at least {0} characters."
+msgstr "{0}文字以上で入力してください。"
+
+msgid "Please enter a value between {0} and {1} characters long."
+msgstr "{0}〜{1}文字で入力してください。"
+
+msgid "Please enter a value between {0} and {1}."
+msgstr "{0}〜{1}の範囲で入力してください。"
+
+msgid "Please enter a value less than or equal to {0}."
+msgstr "{0}以下の値を入力してください。"
+
+msgid "Please enter a value greater than or equal to {0}."
+msgstr "{0}以上の値を入力してください。"
+
+msgid "Please enter your first name."
+msgstr "名を入力してください。"
+
+msgid "Please enter your last name."
+msgstr "姓を入力してください。"
+
+msgid "Please enter your phone number."
+msgstr "電話番号を入力してください。"
+
+msgid "Please provide a shop name."
+msgstr "ショップ名を入力してください。"
+
+msgid "Please provide a unique shop URL."
+msgstr "ショップのURLを入力してください。"
+
+msgid "Shop URL is not available"
+msgstr "このショップのURLはすでに使われています。別のURLを入力してください。"
+
+msgid "Not Available"
+msgstr "使用できません"
+
+msgid "Something went wrong. Please try again."
+msgstr "問題が発生しました。もう一度お試しください。"
+
+msgid "Cheating, eh?"
+msgstr "不正な操作が検出されました。もう一度最初からお試しください。"
+
+msgid "Please provide a valid email address."
+msgstr "正しいメールアドレスを入力してください。"
+
+msgid "Go to Vendor Dashboard"
+msgstr "出品者ダッシュボードへ"

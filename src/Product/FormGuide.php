@@ -237,7 +237,8 @@ final class FormGuide
             ? 'publish'
             : PublishGate::unreviewedStatus(get_current_user_id());
 
-        $live = $target === 'publish';
+        $live   = $target === 'publish';
+        $locked = PublishGate::mustOnboard(get_current_user_id());
 
         printf('<input type="hidden" name="post_status" id="mk_post_status" value="">');
 
@@ -249,14 +250,21 @@ final class FormGuide
             . '商品を保存<small>下書きとして保存します。購入者には表示されません。</small></button>'
         );
 
+        // Still a button, still pressable: pressing it is how the creator
+        // learns why it will not go (see script()). A disabled button that
+        // simply does nothing was the confusion the client reported.
         printf(
             '<button type="submit" name="dokan_update_product" value="Save Product" '
-            . 'class="mk-submit__btn mk-submit__btn--publish" data-mk-status="%s">'
+            . 'class="mk-submit__btn mk-submit__btn--publish%s" data-mk-status="%s" data-mk-publish%s>'
             . '出品する<small>%s</small></button>',
+            $locked ? ' is-locked' : '',
             esc_attr($target),
-            esc_html($live
-                ? 'この内容で公開します。購入者が購入できる状態になります。'
-                : 'この内容で出品します。運営の承認後に公開されます。')
+            $locked ? ' data-mk-locked' : '',
+            esc_html($locked
+                ? '受取設定の完了後に出品できます。'
+                : ($live
+                    ? 'この内容で公開します。購入者が購入できる状態になります。'
+                    : 'この内容で出品します。運営の承認後に公開されます。'))
         );
 
         echo '</div>';
@@ -419,11 +427,55 @@ final class FormGuide
      * element leaves the form exactly as it was rather than throwing and
      * taking the rest of the page's scripts with it.
      */
+    /**
+     * This creator's listings waiting for review, by title.
+     *
+     * For the duplicate check in script(): a creator who presses 出品する
+     * twice, or comes back and lists the same thing again because they could
+     * not see the first one, fills the review queue with copies (2026-09-19).
+     *
+     * @return array<int, array{id:int, title:string}>
+     */
+    public static function pendingTitles(int $userId, int $exclude = 0): array
+    {
+        if ($userId <= 0) {
+            return [];
+        }
+
+        $posts = get_posts([
+            'post_type'      => 'product',
+            'post_status'    => 'pending',
+            'author'         => $userId,
+            'posts_per_page' => 200,
+            'post__not_in'   => $exclude > 0 ? [$exclude] : [],
+            'fields'         => 'ids',
+        ]);
+
+        return array_map(
+            static fn ($id): array => ['id' => (int) $id, 'title' => (string) get_the_title((int) $id)],
+            $posts
+        );
+    }
+
     public static function script(): void
     {
         if (!function_exists('dokan_is_seller_dashboard') || !dokan_is_seller_dashboard()) {
             return;
         }
+
+        $userId = get_current_user_id();
+
+        printf(
+            '<script>window.mkListing = %s;</script>' . "\n",
+            wp_json_encode([
+                'locked'        => PublishGate::mustOnboard($userId),
+                'lockedMessage' => PublishGate::LOCKED_MESSAGE,
+                'payoutsUrl'    => function_exists('dokan_get_navigation_url')
+                    ? dokan_get_navigation_url(\MK\Creator\Onboarding::PAGE)
+                    : '',
+                'pending'       => self::pendingTitles($userId, isset($_GET['product_id']) ? (int) $_GET['product_id'] : 0),
+            ], JSON_UNESCAPED_UNICODE)
+        );
 
         ?>
 <script>
@@ -571,6 +623,125 @@ final class FormGuide
             }
         });
     }
+
+    // Before 出品する goes anywhere: can this creator list yet, and is this
+    // listing already waiting for review? Registered ahead of the status
+    // handler below so a stopped press never touches the form (2026-09-19).
+    var cfg = window.mkListing || {};
+    var publishButtons = document.querySelectorAll('[data-mk-publish], button[name="add_product"]');
+    var confirmed = null;
+
+    function fold(text) {
+        return String(text || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    }
+
+    function showLocked(button) {
+        var box = document.querySelector('.mk-publish-alert');
+
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'mk-publish-alert';
+            box.setAttribute('role', 'alert');
+
+            var text = document.createElement('p');
+            text.textContent = cfg.lockedMessage || '';
+            box.appendChild(text);
+
+            if (cfg.payoutsUrl) {
+                var link = document.createElement('a');
+                link.href = cfg.payoutsUrl;
+                link.className = 'mk-publish-alert__button';
+                link.textContent = '受取設定をする';
+                box.appendChild(link);
+            }
+
+            var holder = button.closest('.mk-submit, .dokan-form-group') || button.parentNode;
+            holder.parentNode.insertBefore(box, holder);
+        }
+
+        box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function askDuplicate(button, title) {
+        var dialog = document.createElement('div');
+        dialog.className = 'mk-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.innerHTML =
+            '<div class="mk-dialog__box">'
+            + '<p class="mk-dialog__title">この商品は現在審査中です</p>'
+            + '<p class="mk-dialog__body"></p>'
+            + '<div class="mk-dialog__actions">'
+            + '<button type="button" class="mk-dialog__cancel">キャンセル</button>'
+            + '<button type="button" class="mk-dialog__go">それでも出品する</button>'
+            + '</div></div>';
+
+        dialog.querySelector('.mk-dialog__body').textContent =
+            '「' + title + '」は、すでに出品されていて運営の審査中です。同じ商品をもう一度出品しますか？';
+
+        function close() {
+            dialog.remove();
+        }
+
+        dialog.querySelector('.mk-dialog__cancel').addEventListener('click', close);
+        dialog.addEventListener('click', function (event) {
+            if (event.target === dialog) {
+                close();
+            }
+        });
+        dialog.querySelector('.mk-dialog__go').addEventListener('click', function () {
+            close();
+            confirmed = button;
+            button.click();
+        });
+
+        document.body.appendChild(dialog);
+        dialog.querySelector('.mk-dialog__cancel').focus();
+    }
+
+    if (cfg.locked) {
+        var newPageButtons = document.querySelector('button[name="add_product"]');
+
+        if (newPageButtons && !document.querySelector('.mk-locked-caption')) {
+            var caption = document.createElement('p');
+            caption.className = 'mk-locked-caption';
+            caption.textContent = '受取設定の完了後に出品できます。';
+            newPageButtons.parentNode.appendChild(caption);
+        }
+
+        Array.prototype.forEach.call(document.querySelectorAll('button[name="add_product"]'), function (button) {
+            button.classList.add('is-locked');
+        });
+    }
+
+    Array.prototype.forEach.call(publishButtons, function (button) {
+        button.addEventListener('click', function (event) {
+            if (cfg.locked) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                showLocked(button);
+                return;
+            }
+
+            if (confirmed === button) {
+                confirmed = null;
+                return;
+            }
+
+            var titleField = document.querySelector('input[name="post_title"]');
+            var title = titleField ? titleField.value : '';
+            var folded = fold(title);
+            var clash = folded !== '' && (cfg.pending || []).some(function (item) {
+                return fold(item.title) === folded;
+            });
+
+            if (clash) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                askDuplicate(button, title.trim());
+            }
+        });
+    });
 
     // ⑥ Whichever button was pressed says what the save means.
     var statusField = document.getElementById('mk_post_status');

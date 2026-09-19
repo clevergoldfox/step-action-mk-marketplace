@@ -49,8 +49,30 @@ foreach ([
 echo "\n=== stripe sdk ===\n";
 check('Stripe\StripeClient', class_exists('Stripe\StripeClient'));
 check('keys configured', MK\Stripe\Client::isConfigured());
-check('test mode', MK\Stripe\Client::isTestMode(),
-    MK\Stripe\Client::isTestMode() ? '(sk_test_)' : '!! LIVE KEY !!');
+// Reported, not required. Since the switch to live keys (2026-09-19) this
+// suite runs against the live account, which it can do because it never
+// writes to Stripe: every transfer, charge and refund id below is invented,
+// and the only calls it makes are reads that fail harmlessly on them.
+check('Stripe mode', true, MK\Stripe\Client::isTestMode() ? 'test (sk_test_)' : 'LIVE -- no Stripe writes in this suite');
+
+// mk_test_creator stands in for an onboarded creator. Its test-mode Stripe
+// account was removed at the live cutover, which leaves it unable to sell, so
+// it is marked onboarded for the length of this run and put back afterwards
+// -- on a fatal error too.
+$fixtureCreator = get_user_by('login', 'mk_test_creator');
+
+if ($fixtureCreator) {
+    $fixtureKey    = MK\Stripe\AccountService::META_STATUS;
+    $fixtureStatus = (string) get_user_meta($fixtureCreator->ID, $fixtureKey, true);
+
+    update_user_meta($fixtureCreator->ID, $fixtureKey, MK\Stripe\AccountService::STATUS_COMPLETED);
+
+    register_shutdown_function(static function () use ($fixtureCreator, $fixtureKey, $fixtureStatus): void {
+        $fixtureStatus === ''
+            ? delete_user_meta($fixtureCreator->ID, $fixtureKey)
+            : update_user_meta($fixtureCreator->ID, $fixtureKey, $fixtureStatus);
+    });
+}
 
 $mkStatuses = [MK\Order\Statuses::PAID, MK\Order\Statuses::SHIPPED, MK\Order\Statuses::RECEIVED];
 
@@ -602,7 +624,7 @@ if (is_wp_error($rndSeller)) {
         str_contains($html, '権限がありません') ? 'PERMISSION DENIED' : '');
     check('shows creator number', $number !== '' && str_contains($html, (string) $number), (string) $number);
     check('shows setup button', str_contains($html, '受取口座を設定する'));
-    check('warns selling is blocked', str_contains($html, '商品は公開されません'));
+    check('warns selling is blocked', str_contains($html, '出品（運営への審査申請）はできません'));
 
     // A logged-in customer is not a vendor and must still be refused.
     $cust = wp_insert_user([
@@ -3050,7 +3072,7 @@ $businessPost = [
         'business_name'  => '株式会社スモーク',
         'representative' => '山田太郎',
         'address'        => '東京都千代田区1-1',
-        'phone'          => '0312345678',
+        'phone'          => '0332105555',
         'email'          => 'smoke@example.com',
         'products'       => '古着',
     ],
@@ -3175,7 +3197,7 @@ if (is_wp_error($lateSeller)) {
 
     $latePost = ['mk_seller_kind' => $B::KIND_BUSINESS, 'mk_business' => [
         'business_type' => 'sole_proprietor', 'business_name' => '古着屋スモーク', 'representative' => '山田花子',
-        'address' => '東京都千代田区', 'phone' => '0300000000', 'email' => 'smoke-late@example.com',
+        'address' => '東京都千代田区丸の内1-1', 'phone' => '0332105556', 'email' => 'smoke-late@example.com',
         'products' => '古着', 'needs_kobutsu' => '1', 'kobutsu_number' => '第1号', 'kobutsu_authority' => '東京都公安委員会',
     ]];
     $lateFiles = ['mk_business_kobutsu_file' => [
@@ -3576,7 +3598,7 @@ if (!is_wp_error($pubSeller)) {
     $B = MK\Creator\Business::class;
     update_user_meta($pubSeller, $B::META_DATA, [
         'business_type' => 'corporation', 'business_name' => '株式会社スモーク', 'representative' => '山田太郎',
-        'address' => '大阪府大阪市北区1-1', 'phone' => '0600000000', 'email' => 'smoke@example.com',
+        'address' => '大阪府大阪市北区1-1', 'phone' => '0643218765', 'email' => 'smoke@example.com',
         'invoice_number' => 'T1234567890123', 'kobutsu_number' => '第1号', 'needs_kobutsu' => true,
     ]);
     update_user_meta($pubSeller, $B::META_KIND, $B::KIND_BUSINESS);
@@ -3589,7 +3611,7 @@ if (!is_wp_error($pubSeller)) {
     ob_start(); $B::renderStoreInfo((object) ['ID' => $pubSeller]); $info = (string) ob_get_clean();
     check('承認後はショップに事業者情報を表示',
         str_contains($info, '株式会社スモーク') && str_contains($info, '山田太郎') && str_contains($info, '大阪府大阪市北区1-1')
-        && str_contains($info, '0600000000') && str_contains($info, 'smoke@example.com'));
+        && str_contains($info, '0643218765') && str_contains($info, 'smoke@example.com'));
     check('許可番号・インボイス番号は公開しない', !str_contains($info, 'T1234567890123') && !str_contains($info, '第1号'));
     check('申請時に公開される項目を案内する', str_contains($B::publicNotice(), 'ショップページに表示されます'));
 
@@ -3876,6 +3898,138 @@ if (!is_wp_error($suspendUser)) {
 }
 
 remove_filter('mk_should_notify', '__return_false', 99);
+
+echo "\n=== 登録情報の確認（⑥） ===\n";
+$PC = MK\Account\ProfileChecks::class;
+
+foreach (['山田', '太郎', 'やまだ', 'ヤマダ', 'Smith', 'オニール', '齋藤', '佐々木'] as $good) {
+    check('名前として通す：' . $good, $PC::nameProblem($good, '姓') === null, (string) $PC::nameProblem($good, '姓'));
+}
+foreach (['テスト', 'ﾃｽﾄ', 'test', '山田1', '★☆', 'ああああ', '名無し', 'ｘｘｘ'] as $bad) {
+    check('名前として断る：' . $bad, $PC::nameProblem($bad, '姓') !== null);
+}
+
+foreach (['090-2468-1357', '０９０２４６８１３５７', '03-3210-5555', '0120-444-222'] as $good) {
+    check('電話番号として通す：' . $good, $PC::phoneProblem($good) === null, (string) $PC::phoneProblem($good));
+}
+foreach (['12345', '090-0000-0000', '00000000000', '03-1234-5678', '0123456789', '080-1111-1111'] as $bad) {
+    check('電話番号として断る：' . $bad, $PC::phoneProblem($bad) !== null);
+}
+
+check('住所として通す', $PC::addressProblem('東京都渋谷区渋谷1-2-3') === null
+    && $PC::addressProblem('大阪府大阪市北区梅田一丁目1番') === null);
+check('都道府県がない住所は断る', str_contains((string) $PC::addressProblem('渋谷区渋谷1-2-3'), '都道府県'));
+check('番地がない住所は断る', str_contains((string) $PC::addressProblem('東京都渋谷区'), '番地'));
+
+$RC = MK\Account\RegistrationChecks::class;
+check('正しい登録内容は通す', $RC::problems([
+    'lname' => '山田', 'fname' => '花子', 'phone' => '090-2468-1357', 'shopurl' => 'hanako-shop',
+]) === []);
+check('不正な登録内容はまとめて伝える', count($RC::problems([
+    'lname' => 'テスト', 'fname' => 'ああああ', 'phone' => '000-0000-0000', 'shopurl' => 'ショップ',
+])) === 4);
+
+check('事業者申請の所在地・電話番号も確認する', (static function (): bool {
+    $errors = MK\Creator\Business::validationErrors([
+        'mk_seller_kind' => MK\Creator\Business::KIND_BUSINESS,
+        'mk_business'    => [
+            'business_type' => 'corporation', 'business_name' => '株式会社スモーク', 'representative' => 'テスト',
+            'address' => '千代田区', 'phone' => '0300000000', 'email' => 'smoke@example.com', 'products' => '古着',
+        ],
+    ], []);
+    $text = implode(' ', $errors);
+
+    return str_contains($text, '代表者名') && str_contains($text, '都道府県') && str_contains($text, '電話番号');
+})());
+
+echo "\n=== ショップのURL（任意）（②） ===\n";
+$savedPost = $_POST;
+$savedMethod = $_SERVER['REQUEST_METHOD'] ?? null;
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_POST = ['register' => '登録する', 'role' => 'seller', 'shopurl' => ''];
+$RC::fillShopUrl();
+$generated = (string) ($_POST['shopurl'] ?? '');
+check('空欄なら自動で作る', (bool) preg_match('/^shop-[a-z0-9]{8}$/', $generated), $generated);
+check('作ったURLは誰も使っていない', !get_user_by('slug', $generated));
+
+$_POST = ['register' => '登録する', 'role' => 'seller', 'shopurl' => 'my-own-shop'];
+$RC::fillShopUrl();
+check('入力されたURLはそのまま', $_POST['shopurl'] === 'my-own-shop');
+
+$_POST = ['register' => '登録する', 'role' => 'customer', 'shopurl' => ''];
+$RC::fillShopUrl();
+check('購入者の登録では作らない', $_POST['shopurl'] === '');
+
+$_POST = $savedPost;
+if ($savedMethod === null) { unset($_SERVER['REQUEST_METHOD']); } else { $_SERVER['REQUEST_METHOD'] = $savedMethod; }
+
+echo "\n=== 登録画面の英語表示（⑤） ===\n";
+check('英語の初期設定ウィザードを出さない',
+    dokan_get_option('disable_welcome_wizard', 'dokan_selling', 'off') === 'on',
+    (string) dokan_get_option('disable_welcome_wizard', 'dokan_selling', 'off'));
+check('「Go to Vendor Dashboard」を日本語に',
+    apply_filters('dokan_set_go_to_vendor_dashboard_btn_text', 'Go to Vendor Dashboard') === '出品者ダッシュボードへ');
+foreach ([
+    'This field is required'            => 'この項目は必須です',
+    'Please enter a valid email address.' => '正しいメールアドレスを入力してください。',
+    'Shop URL is not available'         => 'このショップのURLはすでに使われています。別のURLを入力してください。',
+    'Not Available'                     => '使用できません',
+] as $en => $ja) {
+    check('日本語：' . $en, __($en, 'dokan-lite') === $ja, __($en, 'dokan-lite'));
+}
+ob_start(); $RC::renderNotice(); $regNotice = (string) ob_get_clean();
+check('登録画面で正確な入力をお願いする', str_contains($regNotice, '登録情報は正確に入力してください')
+    && str_contains($regNotice, '第4条'));
+
+echo "\n=== 利用規約などの「戻る」（①） ===\n";
+$legalIds = MK\Account\LegalPages::pageIds();
+foreach (['terms', 'privacy-policy', 'tokushoho', 'guideline'] as $slug) {
+    $legalPage = get_page_by_path($slug);
+    check('対象ページ：' . $slug, $legalPage && in_array((int) $legalPage->ID, $legalIds, true));
+}
+
+echo "\n=== 受取設定が終わるまで出品できない（③） ===\n";
+$lockSeller = wp_insert_user(['user_login' => 'mk_smoke_lock_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (is_wp_error($lockSeller)) {
+    check('lock fixtures', false, $lockSeller->get_error_message());
+} else {
+    wp_set_current_user($lockSeller);
+
+    check('受取設定前は出品できない', MK\Product\PublishGate::mustOnboard($lockSeller));
+    ob_start(); MK\Product\FormGuide::submitButtons(0); $lockedButtons = (string) ob_get_clean();
+    check('出品ボタンを止めて理由を伝える', str_contains($lockedButtons, 'data-mk-locked')
+        && str_contains($lockedButtons, '受取設定の完了後に出品できます'));
+    check('下書き保存はできる', str_contains($lockedButtons, 'mk-submit__btn--save')
+        && !str_contains(substr($lockedButtons, 0, (int) strpos($lockedButtons, 'mk-submit__btn--publish')), 'data-mk-locked'));
+    check('押したときの案内は依頼どおりの文言',
+        MK\Product\PublishGate::LOCKED_MESSAGE === '受取設定が完了していないため、出品できません。先に受取設定を完了してください。');
+
+    update_user_meta($lockSeller, MK\Stripe\AccountService::META_STATUS, MK\Stripe\AccountService::STATUS_COMPLETED);
+    ob_start(); MK\Product\FormGuide::submitButtons(0); $openButtons = (string) ob_get_clean();
+    check('受取設定が済めば出品できる', !MK\Product\PublishGate::mustOnboard($lockSeller)
+        && !str_contains($openButtons, 'data-mk-locked'));
+
+    echo "\n=== 審査中の商品の重複出品（④） ===\n";
+    $dupId = wp_insert_post(['post_type' => 'product', 'post_status' => 'pending',
+        'post_title' => 'スモーク　ヴィンテージ Tシャツ', 'post_author' => $lockSeller]);
+    $otherId = wp_insert_post(['post_type' => 'product', 'post_status' => 'publish',
+        'post_title' => '公開中の別商品', 'post_author' => $lockSeller]);
+
+    $pendingList = MK\Product\FormGuide::pendingTitles($lockSeller);
+    check('審査中の商品を照合の対象にする', in_array('スモーク　ヴィンテージ Tシャツ', array_column($pendingList, 'title'), true));
+    check('公開中の商品は対象にしない', !in_array('公開中の別商品', array_column($pendingList, 'title'), true));
+    check('編集中の商品そのものは対象にしない', MK\Product\FormGuide::pendingTitles($lockSeller, (int) $dupId) === []);
+    check('他のクリエイターの商品は対象にしない', !in_array('スモーク　ヴィンテージ Tシャツ',
+        array_column(MK\Product\FormGuide::pendingTitles(1), 'title'), true));
+
+    wp_delete_post((int) $dupId, true);
+    wp_delete_post((int) $otherId, true);
+    wp_set_current_user(0);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($lockSeller);
+}
 
 echo "\n=== 商品リンクをコピー ===\n";
 

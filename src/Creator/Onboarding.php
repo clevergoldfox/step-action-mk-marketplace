@@ -303,7 +303,8 @@ final class Onboarding
             AccountService::STATUS_IN_PROGRESS => [
                 '確認中 / 未完了',
                 'warning',
-                'Stripe での本人確認が完了していません。「設定を続ける」から残りの情報をご入力ください。',
+                'Stripe での手続きがまだ完了していません。「設定を続ける」から Stripe の画面に進み、'
+                . '最後の「同意して送信」まで完了してください。完了するまで出品はできません。',
             ],
             AccountService::STATUS_RESTRICTED => [
                 '追加情報が必要',
@@ -359,7 +360,7 @@ final class Onboarding
 
         if (!$canSell) {
             echo '<div class="dokan-alert dokan-alert-warning">'
-                . '受取設定が完了するまで、商品は公開されません。'
+                . '受取設定が完了するまで、出品（運営への審査申請）はできません。'
                 . '</div>';
         }
 

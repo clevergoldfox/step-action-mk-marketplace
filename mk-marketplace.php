@@ -135,6 +135,8 @@ add_action('plugins_loaded', static function (): void {
     Product\ShareLink::register();
     Product\OpenGraph::register();
     Account\Registration::register();
+    Account\RegistrationChecks::register();
+    Account\LegalPages::register();
     Account\Terms::register();
     Account\TermsAdmin::register();
     Notify\Events::register();
