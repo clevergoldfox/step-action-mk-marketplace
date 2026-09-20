@@ -125,6 +125,7 @@ add_action('plugins_loaded', static function (): void {
     Creator\Onboarding::register();
     Creator\ShopName::register();
     Creator\Search::register();
+    Creator\SalesAlert::register();
     Creator\Restriction::register();
     Creator\Business::register();
     Creator\BusinessAdmin::register();
@@ -137,6 +138,7 @@ add_action('plugins_loaded', static function (): void {
     Account\Registration::register();
     Account\RegistrationChecks::register();
     Account\LegalPages::register();
+    Account\SellerMenu::register();
     Account\Terms::register();
     Account\TermsAdmin::register();
     Notify\Events::register();

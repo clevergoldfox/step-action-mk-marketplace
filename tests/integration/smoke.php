@@ -4031,6 +4031,78 @@ if (is_wp_error($lockSeller)) {
     wp_delete_user($lockSeller);
 }
 
+echo "\n=== 売れたことが画面で分かる（②） ===\n";
+$soldSeller = wp_insert_user(['user_login' => 'mk_smoke_sold_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$soldBuyer  = wp_insert_user(['user_login' => 'mk_smoke_soldb_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (is_wp_error($soldSeller) || is_wp_error($soldBuyer)) {
+    check('sold fixtures', false, 'user creation failed');
+} else {
+    $muteSold = static fn (): bool => false;
+    add_filter('mk_should_notify', $muteSold, 99);
+
+    wp_set_current_user($soldSeller);
+    ob_start(); MK\Creator\SalesAlert::banner(); $quiet = (string) ob_get_clean();
+    check('売れていないときは何も出さない', $quiet === '');
+
+    $soldOrder = wc_create_order(['customer_id' => $soldBuyer, 'status' => 'pending']);
+    $soldOrder->update_meta_data('_mk_creator_id', $soldSeller);
+    $soldOrder->update_meta_data('_mk_title_snapshot', 'スモーク　黒いコート');
+    $soldOrder->update_meta_data('_mk_product_amount', 5000);
+    $soldOrder->update_meta_data('_mk_option_amount', 0);
+    $soldOrder->save();
+    $soldId = $soldOrder->get_id();
+    $soldOrder->update_status(MK\Order\Statuses::PAID, 'smoke');
+
+    check('購入済の取引を見つける', count(MK\Creator\SalesAlert::waiting($soldSeller)) === 1);
+
+    ob_start(); MK\Creator\SalesAlert::banner(); $sold = (string) ob_get_clean();
+    check('「商品が購入されました」と表示する', str_contains($sold, '商品が購入されました（1件）'));
+    check('商品名と注文番号を出す', str_contains($sold, 'スモーク　黒いコート')
+        && str_contains($sold, '注文 #' . $soldId));
+    check('次にすることを伝える', str_contains($sold, '発送のご準備をお願いします')
+        && str_contains($sold, '取引・発送の画面を開く'));
+
+    $navBadge = MK\Creator\SalesAlert::badge(['orders' => ['title' => '注文']]);
+    check('メニューに件数を出す', str_contains((string) $navBadge['orders']['title'], 'mk-nav-badge')
+        && str_contains((string) $navBadge['orders']['title'], '1'));
+
+    // 発送登録が済めば消える。
+    $soldOrder = wc_get_order($soldId);
+    $soldOrder->update_status(MK\Order\Statuses::SHIPPED, 'smoke');
+    ob_start(); MK\Creator\SalesAlert::banner(); $afterShip = (string) ob_get_clean();
+    check('発送登録すると消える', $afterShip === '' && MK\Creator\SalesAlert::waiting($soldSeller) === []);
+    check('他のクリエイターには出さない', MK\Creator\SalesAlert::waiting($soldBuyer) === []);
+
+    echo "\n=== マイページの「出品履歴」（①） ===\n";
+    $menu = apply_filters('woocommerce_account_menu_items', [
+        'dashboard' => 'ダッシュボード', 'orders' => '注文', 'edit-account' => 'アカウント詳細',
+    ]);
+    check('出品者には「出品履歴」を出す', ($menu[MK\Account\SellerMenu::LISTINGS] ?? '') === '出品履歴');
+    check('「注文」は「購入履歴」に', ($menu['orders'] ?? '') === '購入履歴');
+    check('ダッシュボードの次に置く', array_slice(array_keys($menu), 0, 2) === ['dashboard', MK\Account\SellerMenu::LISTINGS],
+        implode(',', array_keys($menu)));
+    check('出品履歴は出品者ダッシュボードへ',
+        str_contains(wc_get_endpoint_url(MK\Account\SellerMenu::LISTINGS), '/dashboard/products'),
+        wc_get_endpoint_url(MK\Account\SellerMenu::LISTINGS));
+
+    wp_set_current_user($soldBuyer);
+    $buyerMenu = apply_filters('woocommerce_account_menu_items', ['dashboard' => 'ダッシュボード', 'orders' => '注文']);
+    check('購入者には出品履歴を出さない', !isset($buyerMenu[MK\Account\SellerMenu::LISTINGS])
+        && ($buyerMenu['orders'] ?? '') === '購入履歴');
+
+    wp_set_current_user(0);
+    remove_filter('mk_should_notify', $muteSold, 99);
+    as_unschedule_all_actions('mk_execute_transfer', ['order_id' => $soldId], 'mk-marketplace');
+    as_unschedule_all_actions('mk_dispatch_overdue_check', ['order_id' => $soldId], 'mk-marketplace');
+    wc_get_order($soldId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($soldSeller); wp_delete_user($soldBuyer);
+    check('後片付け', !wc_get_order($soldId) && !get_userdata($soldSeller));
+}
+
 echo "\n=== 商品リンクをコピー ===\n";
 
 $SL = MK\Product\ShareLink::class;
