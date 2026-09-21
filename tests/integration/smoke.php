@@ -4103,6 +4103,47 @@ if (is_wp_error($soldSeller) || is_wp_error($soldBuyer)) {
     check('後片付け', !wc_get_order($soldId) && !get_userdata($soldSeller));
 }
 
+echo "\n=== 出品者ダッシュボードの英語表示と売上の数字 ===\n";
+$A = MK\I18n\DokanTranslations::analyticsMessages();
+foreach (['Overview' => '概要', 'Performance' => '販売状況', 'Charts' => 'グラフ', 'By day' => '日別',
+          'Line chart' => '折れ線グラフ', 'Net sales' => '純売上', '%s Report' => '%sのレポート'] as $en => $ja) {
+    check('日本語：' . $en, ($A[$en] ?? '') === $ja, $A[$en] ?? '(none)');
+}
+check('ヘッダーの訳と食い違わない', array_intersect_key($A, MK\I18n\DokanTranslations::scriptMessages()) === []);
+check('サーバー側の見出しも日本語', __('Marketplace Commission', 'dokan-lite') === '運営手数料');
+
+$figSchema = ['totals' => ['properties' => [
+    'total_sales' => [], 'net_revenue' => [], 'orders_count' => [],
+    'total_vendor_earning' => [], 'total_admin_discount' => [], 'total_vendor_discount' => [], 'total_admin_commission' => [],
+]]];
+$figSeller = wp_insert_user(['user_login' => 'mk_smoke_fig_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+
+if (!is_wp_error($figSeller)) {
+    wp_set_current_user($figSeller);
+    $forCreator = array_keys(MK\Creator\DashboardFigures::schema($figSchema)['totals']['properties']);
+    check('出品者には誤った金額のカードを出さない', $forCreator === ['total_sales', 'net_revenue', 'orders_count'],
+        implode(',', $forCreator));
+    check('並び順からも外す', MK\Creator\DashboardFigures::indicators(
+        ['revenue/total_sales', 'revenue/total_seller_earning', 'revenue/total_admin_commission', 'orders/orders_count']
+    ) === ['revenue/total_sales', 'orders/orders_count']);
+
+    wp_set_current_user(1);
+    check('運営の管理画面はそのまま', count(MK\Creator\DashboardFigures::schema($figSchema)['totals']['properties']) === 7);
+
+    wp_set_current_user(0);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($figSeller);
+}
+
+check('注文一覧の「All」も日本語', (apply_filters('dokan_vendor_dashboard_order_listing_statuses',
+    ['all' => 'All', 'wc-mk-paid' => '購入済'])['all'] ?? '') === 'すべて');
+check('画面読み上げ用のラベルも日本語', has_action('wp_print_footer_scripts',
+    [MK\I18n\DokanTranslations::class, 'ariaLabels']) === 30);
+
+check('売上状況をダッシュボードの一番上に', has_action('dokan_dashboard_before_widgets',
+    [MK\Creator\Onboarding::class, 'renderDashboardSummary']) === 10);
+
 echo "\n=== 商品リンクをコピー ===\n";
 
 $SL = MK\Product\ShareLink::class;

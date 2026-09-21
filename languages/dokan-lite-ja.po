@@ -1566,3 +1566,35 @@ msgstr "正しいメールアドレスを入力してください。"
 
 msgid "Go to Vendor Dashboard"
 msgstr "出品者ダッシュボードへ"
+
+# --- Dashboard analytics, server side (2026-09-21) ---------------------------
+# Labels for the summary cards Dokan adds to WooCommerce's revenue schema.
+# Creators no longer see them (MK\Creator\DashboardFigures); wp-admin does.
+
+msgid "Total Earning"
+msgstr "受取額合計"
+
+msgid "Total Vendor Earning"
+msgstr "出品者の受取額合計"
+
+msgid "Marketplace Discount"
+msgstr "運営負担の割引"
+
+msgid "Store Discount"
+msgstr "ショップ負担の割引"
+
+msgid "Total Vendor Discount"
+msgstr "出品者負担の割引合計"
+
+msgid "Marketplace Commission"
+msgstr "運営手数料"
+
+msgid "Total Commission"
+msgstr "手数料合計"
+
+msgid "Seller Totals."
+msgstr "出品者の合計"
+
+# The order list's status filter (Assets::localize, order_statuses).
+msgid "All"
+msgstr "すべて"

@@ -73,7 +73,10 @@ final class Onboarding
          * which are true.
          */
         add_filter('dokan_dashboard_widget_applicable', [self::class, 'hideEmptyWidgets'], 10, 2);
-        add_action('dokan_dashboard_left_widgets', [self::class, 'renderDashboardSummary'], 5);
+        // Above Dokan's analytics block (dokan_dashboard_before_widgets, 20),
+        // not in the left column two screens below it: this panel is the one
+        // with the creator's real takings (see DashboardFigures).
+        add_action('dokan_dashboard_before_widgets', [self::class, 'renderDashboardSummary'], 10);
     }
 
     /**
@@ -443,7 +446,7 @@ final class Onboarding
             return;
         }
 
-        echo '<table class="dokan-table" style="width:100%"><tbody>';
+        echo '<table class="dokan-table mk-summary-table" style="width:100%"><tbody>';
         printf('<tr><th style="width:45%%">販売件数</th><td>%d 件</td></tr>', $s['count']);
         printf('<tr><th>お受け取り額（合計）</th><td><strong>%s</strong></td></tr>',
             esc_html(Earnings::yen($s['net'])));
@@ -488,7 +491,7 @@ final class Onboarding
             return;
         }
 
-        echo '<table class="dokan-table" style="width:100%;margin-bottom:16px"><tbody>';
+        echo '<table class="dokan-table mk-summary-table" style="width:100%;margin-bottom:16px"><tbody>';
         printf('<tr><th style="width:40%%">販売件数</th><td>%d 件</td></tr>', $s['count']);
         printf('<tr><th>販売総額</th><td>%s</td></tr>', esc_html(Earnings::yen($s['gross'])));
         printf('<tr><th>運営手数料</th><td>− %s</td></tr>', esc_html(Earnings::yen($s['commission'])));
@@ -496,7 +499,7 @@ final class Onboarding
             esc_html(Earnings::yen($s['net'])));
         echo '</tbody></table>';
 
-        echo '<table class="dokan-table" style="width:100%"><tbody>';
+        echo '<table class="dokan-table mk-summary-table" style="width:100%"><tbody>';
         printf('<tr><th style="width:40%%">送金済み</th><td>%s</td></tr>',
             esc_html(Earnings::yen($s['paid'])));
         printf('<tr><th>送金予定</th><td>%s</td></tr>',
