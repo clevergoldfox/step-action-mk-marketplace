@@ -141,6 +141,7 @@ add_action('plugins_loaded', static function (): void {
     Account\RegistrationChecks::register();
     Account\LegalPages::register();
     Account\SellerMenu::register();
+    Account\StayLoggedIn::register();
     Account\Terms::register();
     Account\TermsAdmin::register();
     Notify\Events::register();

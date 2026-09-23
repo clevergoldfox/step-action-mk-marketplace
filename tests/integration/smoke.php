@@ -4166,6 +4166,27 @@ if (!function_exists('tb_current_per_page')) {
     $_COOKIE = $savedCookie;
 }
 
+echo "
+=== ログイン状態を保つ ===
+";
+$SL = MK\Account\StayLoggedIn::class;
+check('「次回から自動的に」を選んだら30日', $SL::lifetime(2 * DAY_IN_SECONDS, 1, true) === 30 * DAY_IN_SECONDS,
+    (string) ($SL::lifetime(2 * DAY_IN_SECONDS, 1, true) / DAY_IN_SECONDS) . '日');
+check('選ばなかった人はそのまま', $SL::lifetime(2 * DAY_IN_SECONDS, 1, false) === 2 * DAY_IN_SECONDS);
+check('WordPressの設定に効いている',
+    (int) apply_filters('auth_cookie_expiration', 14 * DAY_IN_SECONDS, 1, true) === 30 * DAY_IN_SECONDS,
+    (string) (apply_filters('auth_cookie_expiration', 14 * DAY_IN_SECONDS, 1, true) / DAY_IN_SECONDS) . '日');
+
+$loginForm = (string) file_get_contents(get_stylesheet_directory() . '/woocommerce/myaccount/form-login.php');
+check('ログイン画面で最初から選ばれている', str_contains($loginForm, 'id="rememberme" value="forever" checked')
+    && str_contains($loginForm, '次回から自動的にログインする'));
+
+$navBack = apply_filters('dokan_get_dashboard_nav', ['orders' => ['title' => '注文']]);
+check('出品者画面からマイページへ戻れる', ($navBack['mk-my-account']['title'] ?? '') === 'マイページ（購入者画面）'
+    && str_contains((string) ($navBack['mk-my-account']['url'] ?? ''), '/my-account'),
+    (string) ($navBack['mk-my-account']['url'] ?? ''));
+check('メニューの最後に置く', ($navBack['mk-my-account']['pos'] ?? 0) === 200);
+
 echo "\n=== 取引・発送の画面（③） ===\n";
 $CO = MK\Order\CreatorOrders::class;
 check('メニュー名を「取引・発送」に', ($CO::renameMenu(['orders' => ['title' => '注文']])['orders']['title'] ?? '') === '取引・発送');

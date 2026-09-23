@@ -24,6 +24,34 @@ final class SellerMenu
     {
         add_filter('woocommerce_account_menu_items', [self::class, 'items'], 20, 1);
         add_filter('woocommerce_get_endpoint_url', [self::class, 'endpointUrl'], 10, 4);
+
+        // The way back. マイページ has led to the 出品者ダッシュボード since it
+        // existed; the dashboard led nowhere, so a creator who wanted their
+        // own purchases had to find the site's own menu again. The client
+        // chose this over a 出品者モード／購入者モード switch, which would
+        // have been a state to get lost in rather than a way across
+        // (2026-09-24).
+        add_filter('dokan_get_dashboard_nav', [self::class, 'backToAccount'], 30, 1);
+    }
+
+    /**
+     * @param mixed $nav
+     * @return mixed
+     */
+    public static function backToAccount($nav)
+    {
+        if (!is_array($nav)) {
+            return $nav;
+        }
+
+        $nav['mk-my-account'] = [
+            'title' => 'マイページ（購入者画面）',
+            'icon'  => '<i class="fas fa-user"></i>',
+            'url'   => function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : home_url('/my-account/'),
+            'pos'   => 200,
+        ];
+
+        return $nav;
     }
 
     /**
