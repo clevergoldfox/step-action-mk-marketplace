@@ -39,10 +39,31 @@ final class CreatorOrders
         add_filter('dokan_get_dashboard_nav', [self::class, 'renameMenu'], 10, 1);
 
         add_filter('dokan_get_order_status_translated', [self::class, 'statusLabel'], 10, 2);
+        add_filter('dokan_get_order_status_class', [self::class, 'statusClass'], 10, 2);
+        add_filter('dokan_order_status_count', [self::class, 'countableStatuses'], 10, 1);
         add_filter('dokan_get_earning_by_order', [self::class, 'earning'], 10, 3);
+
+        add_action('dokan_order_content_inside_before', [self::class, 'intro']);
 
         add_filter('woocommerce_order_get_billing_first_name', [self::class, 'buyerFirstName'], 10, 2);
         add_filter('woocommerce_order_get_billing_last_name', [self::class, 'buyerLastName'], 10, 2);
+    }
+
+    /**
+     * What this screen is, at the top of it.
+     *
+     * The list is the creator's order history as well as their to-do list,
+     * and nothing said so: the client looked at it on a phone and asked where
+     * past orders were (2026-09-23). The sentence is short because the list
+     * below it is the answer.
+     */
+    public static function intro(): void
+    {
+        echo '<div class="mk-orders-intro">'
+            . '<p class="mk-orders-intro__title">取引・発送（注文履歴）</p>'
+            . '<p>購入された取引の一覧です。発送のご準備ができましたら、注文を開いて「発送登録」を行ってください。'
+            . '過去の取引も、この一覧からいつでもご確認いただけます。</p>'
+            . '</div>';
     }
 
     /**
@@ -69,6 +90,50 @@ final class CreatorOrders
         $ours = Statuses::custom();
 
         return isset($ours[$bare]) ? $ours[$bare]['label'] : $label;
+    }
+
+    /**
+     * Count our statuses in the tabs above the list.
+     *
+     * Dokan starts from a fixed list of its own statuses and throws away any
+     * row whose status is not in it, so 購入済（0）sat above a list of 購入済
+     * orders, and 「すべて」 counted only the few that happened to end in a
+     * WooCommerce status.
+     *
+     * @param mixed $counts
+     * @return mixed
+     */
+    public static function countableStatuses($counts)
+    {
+        if (!is_array($counts)) {
+            return $counts;
+        }
+
+        foreach (array_keys(Statuses::custom()) as $status) {
+            $counts[Statuses::wcKey($status)] ??= 0;
+        }
+
+        return $counts;
+    }
+
+    /**
+     * The colour of the status chip.
+     *
+     * Dokan picks it from the same hard-coded list as the label, so ours came
+     * back empty -- and an empty class is a chip with no background, which on
+     * the order list is a blank space where the status should be.
+     *
+     * @param mixed  $class
+     * @param string $status
+     * @return mixed
+     */
+    public static function statusClass($class, $status = '')
+    {
+        return [
+            Statuses::PAID     => 'info',      // paid, waiting to be sent
+            Statuses::SHIPPED  => 'warning',   // sent, waiting to be received
+            Statuses::RECEIVED => 'success',   // done bar the payout
+        ][Statuses::bare((string) $status)] ?? $class;
     }
 
     /**

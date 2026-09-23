@@ -1598,3 +1598,7 @@ msgstr "出品者の合計"
 # The order list's status filter (Assets::localize, order_statuses).
 msgid "All"
 msgstr "すべて"
+
+# The store page of a creator who has not listed anything yet (2026-09-23).
+msgid "No products were found of this vendor!"
+msgstr "このクリエイターの商品は、まだありません。"

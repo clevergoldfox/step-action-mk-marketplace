@@ -4182,6 +4182,25 @@ foreach ([MK\Order\Statuses::PAID => '購入済', MK\Order\Statuses::SHIPPED => 
         && $CO::statusLabel('', 'wc-' . $status) === $label, $CO::statusLabel('', $status));
 }
 check('Dokanの状態はそのまま', $CO::statusLabel('完了', 'completed') === '完了');
+check('一覧の上の件数に数えられる', (static function () use ($CO): bool {
+    $counts = $CO::countableStatuses(['wc-completed' => 0, 'total' => 0]);
+
+    return array_key_exists('wc-mk-paid', $counts)
+        && array_key_exists('wc-mk-shipped', $counts)
+        && array_key_exists('wc-mk-received', $counts)
+        && $counts['wc-completed'] === 0;
+})());
+check('状態の色も付く', $CO::statusClass('', MK\Order\Statuses::PAID) === 'info'
+    && $CO::statusClass('', 'wc-' . MK\Order\Statuses::RECEIVED) === 'success'
+    && $CO::statusClass('success', 'completed') === 'success');
+
+ob_start(); $CO::intro(); $ordersIntro = (string) ob_get_clean();
+check('注文履歴だと一目で分かる見出し', str_contains($ordersIntro, '取引・発送（注文履歴）')
+    && str_contains($ordersIntro, '過去の取引も'));
+check('取引一覧の先頭に出す', has_action('dokan_order_content_inside_before', [$CO, 'intro']) === 10);
+check('ショップに商品がないときの案内も日本語',
+    __('No products were found of this vendor!', 'dokan-lite') === 'このクリエイターの商品は、まだありません。',
+    __('No products were found of this vendor!', 'dokan-lite'));
 
 $coSeller = wp_insert_user(['user_login' => 'mk_smoke_co_s_' . wp_rand(1000, 9999),
     'user_pass' => wp_generate_password(24), 'role' => 'seller']);
@@ -4400,6 +4419,17 @@ check('JPEG・PNGはそのまま使う', MK\Product\OpenGraph::jpegCopy((int) $o
 wp_delete_attachment((int) $ogPng, true);
 wp_delete_attachment((int) $ogAttachment, true);
 @unlink($ogWebp);
+
+// Orders the fixtures above delete leave their Dokan row behind, and
+// those rows are what Dokan counts orders from. Harmless -- they point
+// at nothing -- but they pile up with every run.
+global $wpdb;
+$orphans = (int) $wpdb->query(
+    "DELETE d FROM {$wpdb->prefix}dokan_orders d
+     LEFT JOIN {$wpdb->prefix}wc_orders o ON d.order_id = o.id
+     WHERE o.id IS NULL"
+);
+check('なくなった注文のDokan側の記録を片付けた', $orphans >= 0, $orphans . '件');
 
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
