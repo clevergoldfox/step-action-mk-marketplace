@@ -41,6 +41,13 @@ final class DokanSync
         // Early, so the row exists before anything that renders or checks it.
         add_action('woocommerce_order_status_changed', [self::class, 'onStatusChanged'], 5, 4);
 
+        // And again last: Dokan writes this row too, on the same hook, with
+        // its own commission model -- which on this site means the creator's
+        // share is the whole order total. Written at 5 it was overwritten a
+        // moment later, and the creator's 取引・発送 screen promised them
+        // ¥8,000 of an ¥8,000 sale (2026-09-23).
+        add_action('woocommerce_order_status_changed', [self::class, 'syncFigures'], 99, 4);
+
         // Not from the installer: see runPendingBackfill().
         add_action('wp_loaded', [self::class, 'runPendingBackfill']);
     }
@@ -156,6 +163,76 @@ final class DokanSync
     }
 
     /**
+     * Put our figures back into Dokan's row, whoever wrote it last.
+     *
+     * The row feeds Dokan's own reads -- the order list's 受取額 column and
+     * the order screen's 「この注文の受取額」 -- through a lookup that passes
+     * no filter, so this is the only place the number can be corrected.
+     *
+     * @param mixed $order
+     */
+    public static function syncFigures($orderId, $from = '', $to = '', $order = null): void
+    {
+        $orderId = (int) $orderId;
+        $order   = $order instanceof WC_Order ? $order : wc_get_order($orderId);
+
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+
+        self::writeFigures($order);
+    }
+
+    /** @return bool true if the row now holds our figures */
+    public static function writeFigures(WC_Order $order): bool
+    {
+        $creatorId = (int) $order->get_meta('_mk_creator_id');
+        $amount    = (int) $order->get_meta('_mk_creator_amount');
+
+        if ($creatorId <= 0 || $amount <= 0) {
+            return false;   // not ours, or not priced yet
+        }
+
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'dokan_orders';
+        $row   = $wpdb->get_row($wpdb->prepare(
+            "SELECT seller_id, order_total, net_amount FROM {$table} WHERE order_id = %d LIMIT 1",
+            $order->get_id()
+        ));
+
+        if ($row === null) {
+            return false;   // ensure() writes it; nothing to correct yet
+        }
+
+        $total = (float) $order->get_total();
+
+        if ((int) $row->seller_id === $creatorId
+            && abs((float) $row->net_amount - (float) $amount) < 0.01
+            && abs((float) $row->order_total - $total) < 0.01) {
+            return true;
+        }
+
+        $wpdb->update(
+            $table,
+            ['seller_id' => $creatorId, 'order_total' => $total, 'net_amount' => (float) $amount],
+            ['order_id' => $order->get_id()],
+            ['%d', '%f', '%f'],
+            ['%d']
+        );
+
+        // Dokan remembers what it read from this table.
+        if (class_exists('\WeDevs\Dokan\Cache')) {
+            foreach (['seller', 'admin'] as $context) {
+                \WeDevs\Dokan\Cache::delete(sprintf('get_earning_from_order_table_%d_%s', $order->get_id(), $context));
+                \WeDevs\Dokan\Cache::delete(sprintf('get_earning_from_order_table_%d_%s_raw', $order->get_id(), $context));
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Record every existing marketplace order.
      *
      * @return int rows written
@@ -189,6 +266,9 @@ final class DokanSync
                 if (self::ensure($order) && (!$hadRow || !$hadMeta)) {
                     $written++;
                 }
+
+                // And put our figures back over whatever Dokan last wrote.
+                self::writeFigures($order);
             }
         } while (count($orders) === 200);
 

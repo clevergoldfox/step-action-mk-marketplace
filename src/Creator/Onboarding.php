@@ -416,6 +416,52 @@ final class Onboarding
      * A creator should not have to know which of two numbers to believe, so
      * the wrong one is gone and this stands where it was.
      */
+    /**
+     * The creator's own number, where they can find it.
+     *
+     * It is issued at registration and printed on flyers and social posts --
+     * buyers look creators up by it from the home page -- but the only screen
+     * that showed it to its owner was 売上・受取設定, which nobody visits
+     * twice (2026-09-23). It sits at the top of the dashboard now, with a
+     * button that copies it.
+     */
+    public static function renderNumberCard(int $userId): void
+    {
+        // Read, never allocate: ensureNumber() issues one to whoever it is
+        // given, and a number handed to a buyer -- or to a throwaway user in
+        // a test -- is a number no creator can ever have.
+        $number = (string) get_user_meta($userId, self::USER_META_NUMBER, true);
+
+        if ($number === '') {
+            return;
+        }
+
+        printf(
+            '<div class="dokan-w12 dokan-panel-inner-container"><div class="mk-number">'
+            . '<p class="mk-number__label">あなたのクリエイター番号</p>'
+            . '<p class="mk-number__value"><code>%1$s</code>'
+            . '<button type="button" class="mk-number__copy" data-mk-copy="%1$s">コピー</button>'
+            . '<span class="mk-number__done" role="status" aria-live="polite"></span></p>'
+            . '<p class="mk-number__help">購入者は、この番号であなたのショップをさがせます。'
+            . 'SNSのプロフィールやチラシにご記載ください。</p>'
+            . '</div></div>',
+            esc_attr($number)
+        );
+
+        echo '<script>(function(){'
+            . 'var b=document.querySelector(".mk-number__copy");if(!b)return;'
+            . 'b.addEventListener("click",function(){'
+            . 'var t=b.getAttribute("data-mk-copy");var done=document.querySelector(".mk-number__done");'
+            . 'function say(m){if(done){done.textContent=m;setTimeout(function(){done.textContent="";},2500);}}'
+            . 'if(navigator.clipboard&&navigator.clipboard.writeText){'
+            . 'navigator.clipboard.writeText(t).then(function(){say("コピーしました");},function(){say("コピーできませんでした");});'
+            . 'return;}'
+            . 'var f=document.createElement("input");f.value=t;document.body.appendChild(f);f.select();'
+            . 'try{document.execCommand("copy");say("コピーしました");}catch(e){say("コピーできませんでした");}'
+            . 'document.body.removeChild(f);});'
+            . '})();</script>';
+    }
+
     public static function renderDashboardSummary(): void
     {
         $userId = get_current_user_id();
@@ -428,6 +474,8 @@ final class Onboarding
         }
 
         $s = (new Earnings())->summary($userId);
+
+        self::renderNumberCard($userId);
 
         echo '<div class="dokan-w12 dokan-panel-inner-container">';
         echo '<div class="dokan-panel dokan-panel-default"><div class="dokan-panel-heading">'

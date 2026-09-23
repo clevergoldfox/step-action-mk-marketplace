@@ -112,6 +112,7 @@ final class ShareLink
 
         return sprintf(
             '<div class="mk-share%s" data-url="%s" data-title="%s">'
+            . '%s'
             . '<button type="button" class="mk-share__copy%s">%s</button>'
             . '<button type="button" class="mk-share__native%s" hidden>共有する</button>'
             . '<span class="mk-share__status" role="status" aria-live="polite"></span>'
@@ -119,6 +120,10 @@ final class ShareLink
             $compact ? ' mk-share--compact' : '',
             esc_attr(self::url($productId)),
             esc_attr(get_the_title($productId)),
+            // Asking is what makes anyone do it. Not on the dashboard list,
+            // where the creator is working through their own listings and the
+            // same sentence on every row is noise (2026-09-23).
+            $compact ? '' : '<p class="mk-share__prompt">SNSでシェアしよう！</p>',
             $compact ? '' : ' button',
             $compact ? 'リンクをコピー' : '商品リンクをコピー',
             $compact ? '' : ' button'

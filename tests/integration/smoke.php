@@ -4103,6 +4103,174 @@ if (is_wp_error($soldSeller) || is_wp_error($soldBuyer)) {
     check('後片付け', !wc_get_order($soldId) && !get_userdata($soldSeller));
 }
 
+echo "\n=== 一覧の表示件数とページ送り（①） ===\n";
+if (!function_exists('tb_current_per_page')) {
+    check('表示件数の仕組みが読み込まれている', false, 'theme not loaded');
+} else {
+    $savedGet    = $_GET;
+    $savedCookie = $_COOKIE;
+
+    check('選べるのは10・20・50件', tb_per_page_options() === [10, 20, 50], implode(',', tb_per_page_options()));
+    check('初期値は20件', tb_per_page_default() === 20);
+
+    // 一覧の件数は、この値がそのまま使われる。
+    check('WooCommerceの一覧に反映される', (int) apply_filters('loop_shop_per_page', 24) === tb_current_per_page(),
+        (string) apply_filters('loop_shop_per_page', 24));
+
+    // 実際に商品を並べて、10件ずつなら2ページになることを確かめる。
+    $pageProducts = [];
+    $pageSeller   = get_user_by('login', 'mk_test_creator');
+
+    for ($i = 0; $i < 13; $i++) {
+        $p = new WC_Product_Simple();
+        $p->set_name('mk smoke ページ送り ' . $i);
+        $p->set_status('publish');
+        $p->set_regular_price('1000');
+        $p->save();
+        $pageProducts[] = $p->get_id();
+
+        if ($pageSeller) {
+            wp_update_post(['ID' => $p->get_id(), 'post_author' => $pageSeller->ID]);
+        }
+    }
+
+    $countPages = static function (int $perPage): array {
+        $q = new WP_Query([
+            'post_type'      => 'product',
+            'post_status'    => 'publish',
+            'posts_per_page' => $perPage,
+            'paged'          => 1,
+            'fields'         => 'ids',
+        ]);
+
+        return [count($q->posts), (int) $q->max_num_pages, (int) $q->found_posts];
+    };
+
+    [$first, $pages, $found] = $countPages(10);
+    check('10件ずつなら1ページ目は10件', $first === 10, (string) $first);
+    check('残りは次のページへ', $pages >= 2 && $found > 10, $pages . 'ページ／' . $found . '件');
+
+    [$first50, $pages50] = $countPages(50);
+    check('50件ずつなら1ページに収まる', $pages50 === 1 && $first50 === $found, $first50 . '件');
+
+    foreach ($pageProducts as $id) {
+        wp_delete_post($id, true);
+    }
+
+    check('ページ送りの確認用の商品を片付けた', count(get_posts([
+        'post_type' => 'product', 'post_status' => 'any', 'numberposts' => -1,
+        's' => 'mk smoke ページ送り', 'fields' => 'ids',
+    ])) === 0);
+
+    $_GET    = $savedGet;
+    $_COOKIE = $savedCookie;
+}
+
+echo "\n=== 取引・発送の画面（③） ===\n";
+$CO = MK\Order\CreatorOrders::class;
+check('メニュー名を「取引・発送」に', ($CO::renameMenu(['orders' => ['title' => '注文']])['orders']['title'] ?? '') === '取引・発送');
+check('メニューの件数表示と両立する', (static function () use ($CO): bool {
+    $nav = $CO::renameMenu(['orders' => ['title' => '注文']]);
+    $nav = MK\Creator\SalesAlert::badge($nav);
+
+    return str_starts_with((string) $nav['orders']['title'], '取引・発送');
+})());
+
+foreach ([MK\Order\Statuses::PAID => '購入済', MK\Order\Statuses::SHIPPED => '発送済',
+          MK\Order\Statuses::RECEIVED => '受取確認'] as $status => $label) {
+    check('状態が空欄にならない：' . $label, $CO::statusLabel('', $status) === $label
+        && $CO::statusLabel('', 'wc-' . $status) === $label, $CO::statusLabel('', $status));
+}
+check('Dokanの状態はそのまま', $CO::statusLabel('完了', 'completed') === '完了');
+
+$coSeller = wp_insert_user(['user_login' => 'mk_smoke_co_s_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'seller']);
+$coBuyer  = wp_insert_user(['user_login' => 'mk_smoke_co_b_' . wp_rand(1000, 9999),
+    'user_pass' => wp_generate_password(24), 'role' => 'customer']);
+
+if (!is_wp_error($coSeller) && !is_wp_error($coBuyer)) {
+    $coOrder = wc_create_order(['customer_id' => $coBuyer, 'status' => 'pending']);
+    $coOrder->update_meta_data('_mk_creator_id', $coSeller);
+    $coOrder->update_meta_data('_mk_creator_amount', 6880);
+    $coOrder->set_shipping_last_name('山田');
+    $coOrder->set_shipping_first_name('花子');
+    $coOrder->save();
+    $coId = $coOrder->get_id();
+
+    check('受取額は手数料を引いた実際の金額', (int) $CO::earning(8000.0, wc_get_order($coId)) === 6880,
+        (string) $CO::earning(8000.0, wc_get_order($coId)));
+    check('運営側の取り分には手を出さない', $CO::earning(1120.0, wc_get_order($coId), 'admin') === 1120.0);
+    check('当サイトの取引でなければそのまま', $CO::earning(500.0, wc_create_order()) === 500.0);
+
+    // Dokan reads its own table before any filter, and writes the whole order
+    // total into it. Our figure has to go back over the top.
+    global $wpdb;
+    $coTable = $wpdb->prefix . 'dokan_orders';
+    $wpdb->replace($coTable, [
+        'order_id' => $coId, 'seller_id' => $coSeller,
+        'order_total' => 8000.0, 'net_amount' => 8000.0, 'order_status' => 'wc-mk-paid',
+    ], ['%d', '%d', '%f', '%f', '%s']);
+
+    check('Dokanが書いた受取額を直す', MK\Order\DokanSync::writeFigures(wc_get_order($coId))
+        && (float) $wpdb->get_var($wpdb->prepare("SELECT net_amount FROM {$coTable} WHERE order_id = %d", $coId)) === 6880.0,
+        (string) $wpdb->get_var($wpdb->prepare("SELECT net_amount FROM {$coTable} WHERE order_id = %d", $coId)));
+    check('Dokanの計算もこの金額を返す',
+        (int) dokan()->commission->get_earning_by_order(wc_get_order($coId)) === 6880,
+        (string) dokan()->commission->get_earning_by_order(wc_get_order($coId)));
+    check('取引の状態が変わるたびに直す', has_action('woocommerce_order_status_changed',
+        [MK\Order\DokanSync::class, 'syncFigures']) === 99);
+
+    $wpdb->delete($coTable, ['order_id' => $coId], ['%d']);
+
+    check('購入者名はお届け先から', wc_get_order($coId)->get_billing_last_name() === '山田'
+        && wc_get_order($coId)->get_billing_first_name() === '花子',
+        wc_get_order($coId)->get_formatted_billing_full_name());
+
+    // 受取確認のあと、お届け先は隠される。名前も一緒に消える。
+    $coOrder = wc_get_order($coId);
+    $coOrder->update_meta_data(MK\Checkout\ShippingAddress::META_MASKED, 'yes');
+    $coOrder->save();
+    check('お届け先を隠したあとは「購入者」', wc_get_order($coId)->get_billing_last_name() === '購入者'
+        && wc_get_order($coId)->get_billing_first_name() === '');
+
+    wc_get_order($coId)->delete(true);
+    require_once ABSPATH . 'wp-admin/includes/user.php';
+    wp_delete_user($coSeller); wp_delete_user($coBuyer);
+}
+
+echo "\n=== SNSでシェアしよう（②）とクリエイター番号（④） ===\n";
+$shareSeller = get_user_by('login', 'mk_test_creator');
+$shareProduct = null;
+
+if ($shareSeller) {
+    $shareProduct = new WC_Product_Simple();
+    $shareProduct->set_name('mk smoke シェア');
+    $shareProduct->set_status('publish');
+    $shareProduct->set_regular_price('1200');
+    $shareProduct->save();
+    wp_update_post(['ID' => $shareProduct->get_id(), 'post_author' => $shareSeller->ID]);
+
+    $shareHtml = MK\Product\ShareLink::buttons($shareProduct->get_id());
+    check('商品ページでシェアを呼びかける', str_contains($shareHtml, 'SNSでシェアしよう！'));
+    check('コピーのボタンはそのまま', str_contains($shareHtml, '商品リンクをコピー'));
+    check('出品一覧では呼びかけない',
+        !str_contains(MK\Product\ShareLink::buttons($shareProduct->get_id(), true), 'SNSでシェアしよう'));
+
+    wp_delete_post($shareProduct->get_id(), true);
+
+    ob_start(); MK\Creator\Onboarding::renderNumberCard($shareSeller->ID); $numberCard = (string) ob_get_clean();
+    $creatorNumber = (string) get_user_meta($shareSeller->ID, 'mk_creator_number', true);
+    check('クリエイター番号を本人に見せる', str_contains($numberCard, 'あなたのクリエイター番号')
+        && $creatorNumber !== '' && str_contains($numberCard, $creatorNumber), $creatorNumber);
+    check('番号をコピーできる', str_contains($numberCard, 'data-mk-copy="' . $creatorNumber . '"'));
+    check('番号のない人には出さない', (static function (): bool {
+        $buyer = get_user_by('login', 'mk_test_buyer');
+        ob_start(); MK\Creator\Onboarding::renderNumberCard($buyer ? $buyer->ID : 0); $html = (string) ob_get_clean();
+
+        return $html === '';
+    })());
+}
+
 echo "\n=== 出品者ダッシュボードの英語表示と売上の数字 ===\n";
 $A = MK\I18n\DokanTranslations::analyticsMessages();
 foreach (['Overview' => '概要', 'Performance' => '販売状況', 'Charts' => 'グラフ', 'By day' => '日別',
