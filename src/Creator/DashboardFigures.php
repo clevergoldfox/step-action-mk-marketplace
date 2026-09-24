@@ -41,6 +41,48 @@ final class DashboardFigures
         // After Dokan's own filters (priority 10), which add these.
         add_filter('woocommerce_rest_report_revenue_stats_schema', [self::class, 'schema'], 20, 1);
         add_filter('woocommerce_rest_report_sort_performance_indicators', [self::class, 'indicators'], 20, 1);
+
+        // The 受取額 column in the creator's own product list, which Dokan
+        // works out from its commission tables the same way: a ¥2,000 listing
+        // promised ¥2,000 where ¥1,720 is what a sale would pay (2026-09-25).
+        add_filter('dokan_get_earning_by_product', [self::class, 'productEarning'], 20, 3);
+    }
+
+    /**
+     * What a sale of this listing would pay its creator, at today's rates.
+     *
+     * An estimate, and only an estimate: the rates that count are the ones
+     * frozen onto an order at checkout (Fee\Breakdown). This is the same
+     * arithmetic the listing form shows under the price field, so the two
+     * screens agree.
+     *
+     * @param mixed $earning
+     * @param mixed $product
+     * @param string $context
+     * @return mixed
+     */
+    public static function productEarning($earning, $product = null, $context = 'seller')
+    {
+        if ($context !== 'seller') {
+            return $earning;
+        }
+
+        $product = $product instanceof \WC_Product ? $product : wc_get_product($product);
+
+        if (!$product instanceof \WC_Product) {
+            return $earning;
+        }
+
+        $price = (int) round((float) $product->get_price());
+
+        if ($price <= 0) {
+            return $earning;
+        }
+
+        return (float) (new \MK\Fee\Calculator(
+            (float) \MK\Fee\Settings::productRate(),
+            (float) \MK\Fee\Settings::optionRate()
+        ))->calculate($price, 0)->creatorAmount;
     }
 
     /**

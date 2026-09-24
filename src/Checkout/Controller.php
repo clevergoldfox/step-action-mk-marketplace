@@ -375,8 +375,26 @@ final class Controller
             echo '</div>';
         }
 
-        echo '<button type="submit" class="single_add_to_cart_button button alt">購入手続きへ</button>';
+        echo '<button type="submit" class="single_add_to_cart_button button alt">'
+            . '<span data-mk-buy-label>購入手続きへ</span></button>';
         echo '</form>';
+
+        // Building the order and its payment takes a moment on the server,
+        // during which the page looks unchanged. Registered after the checks
+        // that stop the submit (see MessageVideo::renderBuyFields), so a form
+        // that was refused does not claim to be working.
+        echo '<script>(function(){'
+            . 'var f=document.querySelector(".mk-buy-form");if(!f)return;'
+            . 'f.addEventListener("submit",function(e){'
+            . 'if(e.defaultPrevented)return;'
+            . 'var b=f.querySelector("button[type=submit]");if(!b)return;'
+            . 'var l=b.querySelector("[data-mk-buy-label]");'
+            . 'b.classList.add("is-busy");'
+            . 'if(l){l.textContent="準備しています…";}'
+            // Left enabled: disabling a submit button in the same tick can
+            // stop the submission it was pressed for.
+            . 'setTimeout(function(){b.disabled=true;},0);'
+            . '});})();</script>';
     }
 
     /**
@@ -743,11 +761,21 @@ final class Controller
         message.style.display = 'block';
     }
 
+    var label = document.getElementById('mk-submit-text');
+    var idle  = label ? label.textContent : '';
+
     form.addEventListener('submit', function (event) {
         event.preventDefault();
 
         // Guard against a double submit creating a second charge attempt.
+        // Disabling alone looked like nothing had happened: the card sheet
+        // and 3-D Secure can take seconds, and the client pressed 支払う
+        // twice wondering whether it had registered (2026-09-25).
         button.disabled = true;
+        button.classList.add('is-busy');
+
+        if (label) { label.textContent = '処理中…'; }
+
         message.style.display = 'none';
 
         stripe.confirmPayment({
@@ -759,6 +787,9 @@ final class Controller
             if (result.error) {
                 show(result.error.message || '決済に失敗しました。');
                 button.disabled = false;
+                button.classList.remove('is-busy');
+
+                if (label) { label.textContent = idle; }
             }
         });
     });

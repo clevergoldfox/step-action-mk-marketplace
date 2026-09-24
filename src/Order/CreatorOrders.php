@@ -44,6 +44,7 @@ final class CreatorOrders
         add_filter('dokan_get_earning_by_order', [self::class, 'earning'], 10, 3);
 
         add_action('dokan_order_content_inside_before', [self::class, 'intro']);
+        add_filter('woocommerce_admin_order_actions', [self::class, 'rowActions'], 20, 2);
 
         add_filter('woocommerce_order_get_billing_first_name', [self::class, 'buyerFirstName'], 10, 2);
         add_filter('woocommerce_order_get_billing_last_name', [self::class, 'buyerLastName'], 10, 2);
@@ -64,6 +65,31 @@ final class CreatorOrders
             . '<p>購入された取引の一覧です。発送のご準備ができましたら、注文を開いて「発送登録」を行ってください。'
             . '過去の取引も、この一覧からいつでもご確認いただけます。</p>'
             . '</div>';
+    }
+
+    /**
+     * Say what the button does.
+     *
+     * Dokan's row action is an eye with a tooltip -- on a phone there is no
+     * hover, so it was an unlabelled icon beside a checkbox that does
+     * nothing (bulk status changes are switched off), and the client could
+     * not tell which one opened the order (2026-09-25). The icon keeps its
+     * place and gains the word.
+     *
+     * @param mixed $actions
+     * @param mixed $order
+     * @return mixed
+     */
+    public static function rowActions($actions, $order = null)
+    {
+        if (!is_array($actions) || !isset($actions['view'])) {
+            return $actions;
+        }
+
+        $actions['view']['icon'] = '<i class="far fa-eye">&nbsp;</i>詳細を見る';
+        $actions['view']['name'] = '詳細を見る';
+
+        return $actions;
     }
 
     /**

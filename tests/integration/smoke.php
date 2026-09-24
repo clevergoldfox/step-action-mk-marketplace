@@ -4344,6 +4344,32 @@ if (!is_wp_error($figSeller)) {
     wp_delete_user($figSeller);
 }
 
+check('一覧の操作ボタンに文字を付ける', (static function (): bool {
+    $a = MK\Order\CreatorOrders::rowActions(['view' => ['name' => 'View', 'icon' => '<i></i>', 'url' => '#']]);
+
+    return str_contains((string) $a['view']['icon'], '詳細を見る') && $a['view']['name'] === '詳細を見る';
+})());
+check('他の操作には手を出さない',
+    MK\Order\CreatorOrders::rowActions(['complete' => ['name' => 'Complete']]) === ['complete' => ['name' => 'Complete']]);
+
+foreach (['Upload featured image' => '商品画像をアップロード', 'Select and Crop' => '選んで切り抜く',
+         'Set featured image' => 'この画像を使う'] as $en => $ja) {
+    check('画像選択の画面も日本語：' . $en, __($en, 'dokan-lite') === $ja, __($en, 'dokan-lite'));
+}
+
+$feeRate = MK\Fee\Settings::productRate();
+$priced = new WC_Product_Simple();
+$priced->set_name('mk smoke 受取額');
+$priced->set_regular_price('2000');
+$priced->set_price('2000');
+$priced->save();
+check('商品一覧の受取額は手数料を引いた額',
+    (int) MK\Creator\DashboardFigures::productEarning(2000.0, $priced) === 2000 - (int) round(2000 * $feeRate),
+    (string) MK\Creator\DashboardFigures::productEarning(2000.0, $priced) . ' / 手数料率 ' . $feeRate);
+check('運営側の取り分はDokanのまま',
+    MK\Creator\DashboardFigures::productEarning(280.0, $priced, 'admin') === 280.0);
+wp_delete_post($priced->get_id(), true);
+
 check('注文一覧の「All」も日本語', (apply_filters('dokan_vendor_dashboard_order_listing_statuses',
     ['all' => 'All', 'wc-mk-paid' => '購入済'])['all'] ?? '') === 'すべて');
 check('画面読み上げ用のラベルも日本語', has_action('wp_print_footer_scripts',

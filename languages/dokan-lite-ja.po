@@ -1602,3 +1602,31 @@ msgstr "すべて"
 # The store page of a creator who has not listed anything yet (2026-09-23).
 msgid "No products were found of this vendor!"
 msgstr "このクリエイターの商品は、まだありません。"
+
+# --- The media picker on the listing form (2026-09-25) -----------------------
+# Dokan passes these to wp.media as the frame's title and button, so they are
+# what a creator reads while choosing a photo.
+
+msgid "Upload featured image"
+msgstr "商品画像をアップロード"
+
+msgid "Set featured image"
+msgstr "この画像を使う"
+
+msgid "Choose Image"
+msgstr "画像を選ぶ"
+
+msgid "Select and Crop"
+msgstr "選んで切り抜く"
+
+msgid "Add Images to Product Gallery"
+msgstr "商品画像を追加"
+
+msgid "Add to gallery"
+msgstr "商品画像に追加"
+
+msgid "Choose a file"
+msgstr "ファイルを選ぶ"
+
+msgid "Insert file URL"
+msgstr "ファイルのURLを挿入"
