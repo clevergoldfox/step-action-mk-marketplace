@@ -113,14 +113,14 @@ final class DokanTranslations
             'No data found'                              => 'データがありません',
             'Remove filter'                              => '絞り込みを解除',
             'Select or Upload Media'                     => '画像を選択またはアップロード',
-            'Store Image'                                => 'ショップ画像',
+            'Store Image'                                => 'プロフィール画像',
             'Total Sales'                                => '売上合計',
             'Use this media'                             => 'この画像を使う',
             'User Profile Image'                         => 'プロフィール画像',
             'Vendor Dashboard'                           => '出品者ダッシュボード',
             'Vendor Dashboard Logo'                      => '出品者ダッシュボードのロゴ',
-            'Visit Store'                                => 'ショップを見る',
-            'Your Store'                                 => 'あなたのショップ',
+            'Visit Store'                                => 'プロフィールページを見る',
+            'Your Store'                                 => 'あなたのページ',
         ];
     }
 
@@ -266,7 +266,7 @@ final class DokanTranslations
             'Single product'                             => '商品別',
             'Single variation'                           => 'バリエーション別',
             'Sorry, you are not allowed to access this page.' => 'このページを表示する権限がありません。',
-            'Store Performance'                          => 'ショップの販売状況',
+            'Store Performance'                          => '販売状況',
             'TAX'                                        => '税',
             'Tax rate'                                   => '税率',
             'Taxes'                                      => '税',

@@ -217,7 +217,7 @@ final class Restriction
         }
 
         echo '<table class="wp-list-table widefat fixed striped"><thead><tr>'
-            . '<th>出品者</th><th style="width:160px">ショップ名</th>'
+            . '<th>出品者</th><th style="width:160px">クリエイター名</th>'
             . '<th style="width:110px">発送遅延</th><th style="width:120px">未回収額</th>'
             . '<th style="width:120px">状態</th>'
             . '<th style="width:380px">操作</th></tr></thead><tbody>';

@@ -3609,11 +3609,11 @@ if (!is_wp_error($pubSeller)) {
 
     update_user_meta($pubSeller, $B::META_STATUS, $B::STATUS_APPROVED);
     ob_start(); $B::renderStoreInfo((object) ['ID' => $pubSeller]); $info = (string) ob_get_clean();
-    check('承認後はショップに事業者情報を表示',
+    check('承認後はプロフィールに事業者情報を表示',
         str_contains($info, '株式会社スモーク') && str_contains($info, '山田太郎') && str_contains($info, '大阪府大阪市北区1-1')
         && str_contains($info, '0643218765') && str_contains($info, 'smoke@example.com'));
     check('許可番号・インボイス番号は公開しない', !str_contains($info, 'T1234567890123') && !str_contains($info, '第1号'));
-    check('申請時に公開される項目を案内する', str_contains($B::publicNotice(), 'ショップページに表示されます'));
+    check('申請時に公開される項目を案内する', str_contains($B::publicNotice(), 'プロフィールページに表示されます'));
 
     require_once ABSPATH . 'wp-admin/includes/user.php';
     wp_delete_user($pubSeller);
@@ -3972,7 +3972,7 @@ check('「Go to Vendor Dashboard」を日本語に',
 foreach ([
     'This field is required'            => 'この項目は必須です',
     'Please enter a valid email address.' => '正しいメールアドレスを入力してください。',
-    'Shop URL is not available'         => 'このショップのURLはすでに使われています。別のURLを入力してください。',
+    'Shop URL is not available'         => 'このURLはすでに使われています。別のURLを入力してください。',
     'Not Available'                     => '使用できません',
 ] as $en => $ja) {
     check('日本語：' . $en, __($en, 'dokan-lite') === $ja, __($en, 'dokan-lite'));
@@ -4188,7 +4188,7 @@ check('出品者画面からマイページへ戻れる', ($navBack['mk-my-accou
 check('メニューの最後に置く', ($navBack['mk-my-account']['pos'] ?? 0) === 200);
 
 echo "
-=== クリエイターのショップページ ===
+=== クリエイターのプロフィールページ ===
 ";
 $SP = MK\Creator\StoreProfile::class;
 $spSeller = get_user_by('login', 'mk_test_creator');
@@ -4216,9 +4216,9 @@ if (!$spSeller) {
     $SP::save($spSeller->ID);
     ob_start(); $SP::renderHeader($spSeller); $spHeader = (string) ob_get_clean();
     $spNumber = (string) get_user_meta($spSeller->ID, MK\Creator\Onboarding::USER_META_NUMBER, true);
-    check('ショップページにクリエイター番号', str_contains($spHeader, 'クリエイター番号')
+    check('プロフィールにクリエイター番号', str_contains($spHeader, 'クリエイター番号')
         && $spNumber !== '' && str_contains($spHeader, $spNumber), $spNumber);
-    check('ショップページに自己紹介', str_contains($spHeader, '普段着ているお洋服'));
+    check('プロフィールに自己紹介', str_contains($spHeader, '普段着ているお洋服'));
     check('同じ見出しを二重に出さない', (static function () use ($SP, $spSeller): bool {
         ob_start(); $SP::renderHeader($spSeller); return ob_get_clean() === '';
     })());
@@ -4240,8 +4240,151 @@ if (!$spSeller) {
 
     check('並び順は新着順が既定', apply_filters('dokan_default_store_products_orderby', 'menu_order') === 'date',
         (string) apply_filters('dokan_default_store_products_orderby', 'menu_order'));
-    check('ショップの商品は3列', function_exists('tb_is_store_page'), 'theme loaded');
+    check('プロフィールの商品は3列', function_exists('tb_is_store_page'), 'theme loaded');
+
+    // 住所・電話番号・メール・営業時間はプロフィールに出さない（2026-09-27）。
+    foreach (['address', 'phone', 'email'] as $spHidden) {
+        check('プロフィールに' . $spHidden . 'を出さない', dokan_is_vendor_info_hidden($spHidden) === true);
+    }
+
+    $spAppearance = (array) get_option('dokan_appearance');
+    check('営業時間を出さない', ($spAppearance['store_open_close'] ?? '') === 'off',
+        (string) ($spAppearance['store_open_close'] ?? ''));
+    check('事業者情報（特定商取引法）は残す',
+        has_action('dokan_store_profile_frame_after', [MK\Creator\Business::class, 'renderStoreInfo']) !== false);
+
+    ob_start(); $SP::renderField($spSeller); $spNote = (string) ob_get_clean();
+    check('住所などが非公開だと設定画面に書いてある',
+        str_contains($spNote, 'プロフィールページには表示されません'));
+
+    // 「プロフィールを設定する」への導線（2026-09-27）。
+    $spNav = apply_filters('dokan_get_dashboard_nav', ['settings' => ['title' => 'Settings',
+        'submenu' => ['store' => ['title' => 'Store']]]]);
+    check('メニューはプロフィール・設定', ($spNav['settings']['title'] ?? '') === 'プロフィール・設定',
+        (string) ($spNav['settings']['title'] ?? ''));
+    check('その中はプロフィール', ($spNav['settings']['submenu']['store']['title'] ?? '') === 'プロフィール');
+
+    $spCurrent = get_current_user_id();
+    wp_set_current_user($spSeller->ID);
+    delete_user_meta($spSeller->ID, MK\Creator\StoreProfile::META_BIO);
+    ob_start(); $SP::renderPrompt(); $spPrompt = (string) ob_get_clean();
+    check('自己紹介が空なら設定への案内を出す',
+        str_contains($spPrompt, 'プロフィールを設定する') && str_contains($spPrompt, '/settings/store'),
+        $spPrompt === '' ? '(出ない)' : '');
+
+    update_user_meta($spSeller->ID, MK\Creator\StoreProfile::META_BIO, '出品しています');
+    ob_start(); $SP::renderPrompt(); $spPromptAfter = (string) ob_get_clean();
+    check('設定済みなら案内は出さない', $spPromptAfter === '');
+    wp_set_current_user($spCurrent);
+
+    if ($spBefore !== '') {
+        update_user_meta($spSeller->ID, MK\Creator\StoreProfile::META_BIO, $spBefore);
+    } else {
+        delete_user_meta($spSeller->ID, MK\Creator\StoreProfile::META_BIO);
+    }
 }
+
+echo "
+=== クリエイターのならび順（おすすめ） ===
+";
+$RK      = MK\Creator\Ranking::class;
+$rkSaved = get_transient('mk_creator_ranking_base');
+
+// 本物のデータで：出品者だけが並ぶ。
+delete_transient('mk_creator_ranking_base');
+$rkReal = $RK::creators(20);
+check('出品者だけが並ぶ', $rkReal !== [] && array_reduce($rkReal, static function (bool $ok, int $id): bool {
+    $user = get_userdata($id);
+
+    return $ok && $user && in_array('seller', (array) $user->roles, true);
+}, true), implode(',', $rkReal));
+check('運営（管理者）は並ばない', !in_array(1, $rkReal, true));
+
+// つくったデータで：実績のある人、昨日はじめた人、何もしていない人。
+$rkNow  = time();
+$rkDay  = DAY_IN_SECONDS;
+$rkMake = static function (array $over) use ($rkNow): array {
+    return array_merge([
+        'products' => 1, 'latest' => $rkNow, 'sales' => 0, 'followers' => 0,
+        'views' => 0, 'favourites' => 0, 'profile' => false, 'registered' => $rkNow,
+    ], $over);
+};
+$rkRows = [
+    9901 => $rkMake(['followers' => 240, 'views' => 900, 'sales' => 60, 'products' => 40,
+        'latest' => $rkNow - 40 * $rkDay, 'registered' => $rkNow - 400 * $rkDay, 'profile' => true]),
+    9902 => $rkMake(['followers' => 120, 'views' => 500, 'sales' => 30, 'products' => 20,
+        'latest' => $rkNow - 2 * $rkDay, 'registered' => $rkNow - 300 * $rkDay, 'profile' => true]),
+    9903 => $rkMake(['followers' => 8, 'views' => 40, 'sales' => 2, 'products' => 5,
+        'latest' => $rkNow - $rkDay, 'registered' => $rkNow - 60 * $rkDay, 'profile' => true]),
+    9904 => $rkMake(['products' => 2, 'views' => 3, 'registered' => $rkNow - $rkDay, 'profile' => true]),
+    9905 => $rkMake(['latest' => $rkNow - 3 * $rkDay, 'registered' => $rkNow - 3 * $rkDay]),
+];
+set_transient('mk_creator_ranking_base', $rkRows, 300);
+
+$rkPeriod = (int) floor(time() / MK\Creator\Ranking::ROTATE);
+check('同じ時間帯なら並びは変わらない', $RK::creators(20, $rkPeriod) === $RK::creators(20, $rkPeriod),
+    implode(',', $RK::creators(20, $rkPeriod)));
+
+$rkFirst = [];
+$rkTop3  = [];
+
+for ($rkStep = 0; $rkStep < 168; $rkStep++) {
+    $rkOrder = $RK::creators(20, $rkPeriod + $rkStep);
+    $rkFirst[$rkOrder[0]] = ($rkFirst[$rkOrder[0]] ?? 0) + 1;
+
+    foreach (array_slice($rkOrder, 0, 3) as $rkId) {
+        $rkTop3[$rkId] = ($rkTop3[$rkId] ?? 0) + 1;
+    }
+}
+
+check('時間がたてば入れ替わる', count($rkFirst) >= 3, count($rkFirst) . '人が1位になった（168時間ぶん）');
+check('ずっと同じ人が1位ではない', max($rkFirst) < 120,
+    'いちばん多い人で' . max($rkFirst) . '回 / 168回');
+check('実績のある人はよく上位に', ($rkTop3[9902] ?? 0) > ($rkTop3[9905] ?? 0),
+    '実績あり' . ($rkTop3[9902] ?? 0) . '回 / 活動なし' . ($rkTop3[9905] ?? 0) . '回');
+check('昨日はじめた人も上位に出る', ($rkTop3[9904] ?? 0) >= 17,
+    ($rkTop3[9904] ?? 0) . '回 / 168回');
+check('フォロワーの多さだけでは決まらない',
+    ($rkFirst[9901] ?? 0) < 168 && ($rkTop3[9903] ?? 0) > 0);
+
+delete_transient('mk_creator_ranking_base');
+
+if (is_array($rkSaved)) {
+    set_transient('mk_creator_ranking_base', $rkSaved, 300);
+}
+
+// 閲覧数は30日ぶん。
+$rkViewer = get_user_by('login', 'mk_test_creator');
+
+if ($rkViewer) {
+    $rkViewsBefore = get_user_meta($rkViewer->ID, MK\Creator\Ranking::META_VIEWS, true);
+    update_user_meta($rkViewer->ID, MK\Creator\Ranking::META_VIEWS, [
+        current_time('Y-m-d') => 4,
+        gmdate('Y-m-d', time() - 3 * DAY_IN_SECONDS) => 6,
+        gmdate('Y-m-d', time() - 400 * DAY_IN_SECONDS) => 999,   // 古すぎる
+    ]);
+    check('閲覧数は30日ぶんを数える', $RK::views($rkViewer->ID) === 1009,
+        (string) $RK::views($rkViewer->ID));
+
+    if (is_array($rkViewsBefore)) {
+        update_user_meta($rkViewer->ID, MK\Creator\Ranking::META_VIEWS, $rkViewsBefore);
+    } else {
+        delete_user_meta($rkViewer->ID, MK\Creator\Ranking::META_VIEWS);
+    }
+}
+
+echo "
+=== 「ショップ」ではなく「クリエイター」 ===
+";
+check('Store Name', __('Store Name', 'dokan-lite') === 'クリエイター名', __('Store Name', 'dokan-lite'));
+check('Shop Name', __('Shop Name', 'dokan-lite') === 'クリエイター名', __('Shop Name', 'dokan-lite'));
+check('Visit Store', __('Visit Store', 'dokan-lite') === 'プロフィールページを見る', __('Visit Store', 'dokan-lite'));
+check('Search Vendors', __('Search Vendors', 'dokan-lite') === 'クリエイターを探す', __('Search Vendors', 'dokan-lite'));
+check('More Products', __('More Products', 'dokan-lite') === 'このクリエイターの他の商品', __('More Products', 'dokan-lite'));
+
+$poFile = WP_PLUGIN_DIR . '/mk-marketplace/languages/dokan-lite-ja.po';
+check('訳文に「ショップ」が残っていない',
+    is_readable($poFile) && !str_contains((string) file_get_contents($poFile), 'ショップ'));
 
 echo "\n=== 取引・発送の画面（③） ===\n";
 $CO = MK\Order\CreatorOrders::class;
@@ -4536,7 +4679,7 @@ check('なくなった注文のDokan側の記録を片付けた', $orphans >= 0,
 
 echo "\n=== Dokan dashboard header (JS) in Japanese ===\n";
 $js = MK\I18n\DokanTranslations::scriptMessages();
-check('Visit Store translated', ($js['Visit Store'] ?? '') === 'ショップを見る');
+check('Visit Store translated', ($js['Visit Store'] ?? '') === 'プロフィールページを見る');
 check('Dokan branding replaced by site name', ($js['Dokan'] ?? '') === get_bloginfo('name'));
 
 echo "\n=== timezone ===\n";

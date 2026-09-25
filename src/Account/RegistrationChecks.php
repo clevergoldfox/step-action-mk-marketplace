@@ -161,7 +161,7 @@ final class RegistrationChecks
         $shopUrl = trim((string) ($post['shopurl'] ?? ''));
 
         if ($shopUrl !== '' && !preg_match('/^[a-z0-9][a-z0-9\-]{1,39}$/', $shopUrl)) {
-            $problems[] = 'ショップのURLは、半角の英小文字・数字・ハイフン（-）で、2〜40文字で入力してください。';
+            $problems[] = 'ページのURLは、半角の英小文字・数字・ハイフン（-）で、2〜40文字で入力してください。';
         }
 
         return $problems;
@@ -217,7 +217,7 @@ final class RegistrationChecks
     var label = document.querySelector('label[for="seller-url"]');
 
     if (label) {
-        label.innerHTML = 'ショップのURL<span class="mk-optional">（任意）</span>';
+        label.innerHTML = 'ページのURL<span class="mk-optional">（任意）</span>';
     }
 
     var note = document.createElement('small');

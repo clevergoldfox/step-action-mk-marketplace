@@ -99,7 +99,7 @@ final class Search
         $number = Numbering::normalise(sanitize_text_field(wp_unslash($_GET[self::NOT_FOUND_ARG])));
 
         printf(
-            '<div class="woocommerce-info">クリエイター番号「%s」のショップは見つかりませんでした。'
+            '<div class="woocommerce-info">クリエイター番号「%s」のクリエイターは見つかりませんでした。'
             . '番号をご確認のうえ、もう一度お試しください。</div>',
             esc_html($number)
         );

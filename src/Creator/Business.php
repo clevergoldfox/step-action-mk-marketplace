@@ -263,7 +263,7 @@ final class Business
 
         echo '<p class="mk-business-notice">事業者申請は、運営の審査後に承認となります。'
             . '<strong>申請から承認まで、最大1週間程度かかる場合があります。</strong>'
-            . '承認されるまで商品の公開はできませんが、ショップの設定や商品の下書き保存は行えます。<br>'
+            . '承認されるまで商品の公開はできませんが、プロフィールの設定や商品の下書き保存は行えます。<br>'
             . self::publicNotice() . '</p>';
 
         self::renderApplicationInputs();
@@ -730,7 +730,7 @@ final class Business
         if (self::isApproved($userId)) {
             printf(
                 '<p>%s　<strong>%s</strong> として承認されています。</p>'
-                . '<p>ショップページのショップ名の横と、商品ページの出品者情報に「事業者」と表示されます。</p>'
+                . '<p>プロフィールページのクリエイター名の横と、商品ページの出品者情報に「事業者」と表示されます。</p>'
                 . '<p class="description">登録内容の変更が必要な場合は、運営までお問い合わせください。</p>',
                 self::badgeHtml(),
                 esc_html((string) ($data['business_name'] ?? ''))
@@ -763,7 +763,7 @@ final class Business
         }
 
         echo '<p>法人・個人事業主として出品される場合は、事業者申請が必要です。'
-            . '運営の審査で承認されると、ショップページと商品ページに「事業者」と表示されます。</p>';
+            . '運営の審査で承認されると、プロフィールページと商品ページに「事業者」と表示されます。</p>';
 
         if (!self::isBusiness($userId)) {
             echo '<p><strong>すでに出品中の商品は、審査中もこれまでどおり販売を続けられます。</strong></p>';
@@ -980,7 +980,7 @@ final class Business
     public static function publicNotice(): string
     {
         return '承認後、法人名または屋号・代表者名・所在地・電話番号・メールアドレスは、'
-            . '特定商取引法に基づく表記としてショップページに表示されます。'
+            . '特定商取引法に基づく表記としてプロフィールページに表示されます。'
             . '古物商許可証の画像などの審査用資料は公開されません。';
     }
 

@@ -33,6 +33,15 @@ final class StoreProfile
 
     public static function register(): void
     {
+        // A profile page, not a shop front: the client asked for the address,
+        // phone, email and opening hours to go (2026-09-27). What stays is
+        // the 特定商取引法 block for approved businesses -- that one is a
+        // legal disclosure, not a shop detail (see Creator\Business).
+        add_filter('option_dokan_appearance', [self::class, 'hideShopDetails']);
+
+        add_filter('dokan_get_dashboard_nav', [self::class, 'renameSettings'], 15, 1);
+        add_action('dokan_dashboard_before_widgets', [self::class, 'renderPrompt'], 8);
+
         add_action('dokan_settings_after_store_name', [self::class, 'renderField'], 10, 2);
         add_action('dokan_store_profile_saved', [self::class, 'save'], 10, 1);
         // Not dokan_store_header_after_store_name: that one fires INSIDE the
@@ -40,6 +49,74 @@ final class StoreProfile
         // introduction became columns beside the shop name, and the name
         // wrapped one character per line. This hook is the list under it.
         add_action('dokan_store_header_info_fields', [self::class, 'renderHeader'], 5, 1);
+    }
+
+    /**
+     * @param mixed $options
+     * @return mixed
+     */
+    public static function hideShopDetails($options)
+    {
+        if (!is_array($options)) {
+            return $options;
+        }
+
+        $hidden = is_array($options['hide_vendor_info'] ?? null) ? $options['hide_vendor_info'] : [];
+
+        foreach (['address', 'phone', 'email'] as $field) {
+            $hidden[$field] = 'on';
+        }
+
+        $options['hide_vendor_info'] = $hidden;
+        $options['store_open_close'] = 'off';
+
+        return $options;
+    }
+
+    /**
+     * 設定 alone did not say that this is where a creator introduces
+     * themselves (2026-09-27).
+     *
+     * @param mixed $nav
+     * @return mixed
+     */
+    public static function renameSettings($nav)
+    {
+        if (!is_array($nav) || !isset($nav['settings'])) {
+            return $nav;
+        }
+
+        $nav['settings']['title'] = 'プロフィール・設定';
+
+        if (isset($nav['settings']['submenu']['store']['title'])) {
+            $nav['settings']['submenu']['store']['title'] = 'プロフィール';
+        }
+
+        return $nav;
+    }
+
+    /** The way in, on the dashboard, while the profile is still empty. */
+    public static function renderPrompt(): void
+    {
+        $userId = get_current_user_id();
+
+        if ($userId <= 0 || !function_exists('dokan_is_user_seller') || !dokan_is_user_seller($userId)) {
+            return;
+        }
+
+        if (self::bio($userId) !== '') {
+            return;   // they have said their piece
+        }
+
+        printf(
+            '<div class="dokan-w12 dokan-panel-inner-container"><div class="mk-profile-prompt">'
+            . '<p class="mk-profile-prompt__title">プロフィールを設定しましょう</p>'
+            . '<p class="mk-profile-prompt__body">アイコン画像と自己紹介を設定すると、'
+            . 'あなたのページが購入者に伝わりやすくなります。</p>'
+            . '<a class="mk-profile-prompt__button" href="%s">プロフィールを設定する</a>'
+            . '</div></div>',
+            esc_url(function_exists('dokan_get_navigation_url') ? dokan_get_navigation_url('settings/store') : home_url('/dashboard/settings/store/'))
+        );
     }
 
     public static function bio(int $userId): string
@@ -62,12 +139,19 @@ final class StoreProfile
             . '<label class="dokan-w3 dokan-control-label" for="mk_store_bio">自己紹介</label>'
             . '<div class="dokan-w5 dokan-text-left">'
             . '<textarea class="dokan-form-control" name="settings[mk_bio]" id="mk_store_bio" rows="3" maxlength="%1$d">%2$s</textarea>'
-            . '<span class="dokan-form-help">ショップページのお名前の下に表示されます（%1$d文字まで）。'
+            . '<span class="dokan-form-help">プロフィールページのお名前の下に表示されます（%1$d文字まで）。'
             . 'どんな商品を出品しているか、購入者の方へ一言どうぞ。</span>'
             . '</div></div>',
             self::MAX_BIO,
             esc_textarea(self::bio($userId))
         );
+
+        // The address and telephone fields below this are Dokan's, and a
+        // creator filling them in has no way of knowing they are private.
+        echo '<div class="dokan-form-group"><div class="dokan-w8 dokan-text-left mk-private-note">'
+            . '住所・電話番号・メールアドレスは、プロフィールページには表示されません。'
+            . '配送や法令対応のために運営が確認する情報です。'
+            . '</div></div>';
     }
 
     /**

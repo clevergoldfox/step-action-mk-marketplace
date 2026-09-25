@@ -442,7 +442,7 @@ final class Onboarding
             . '<p class="mk-number__value"><code>%1$s</code>'
             . '<button type="button" class="mk-number__copy" data-mk-copy="%1$s">コピー</button>'
             . '<span class="mk-number__done" role="status" aria-live="polite"></span></p>'
-            . '<p class="mk-number__help">購入者は、この番号であなたのショップをさがせます。'
+            . '<p class="mk-number__help">購入者は、この番号であなたのページをさがせます。'
             . 'SNSのプロフィールやチラシにご記載ください。</p>'
             . '</div></div>',
             esc_attr($number)

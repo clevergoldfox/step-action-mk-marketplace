@@ -62,10 +62,10 @@ msgid "Upload banner"
 msgstr "バナーをアップロード"
 
 msgid "Upload a banner for your store. Banner size is (%1$sx%2$s) pixels."
-msgstr "ショップのバナー画像をアップロードしてください。推奨サイズは %1$s×%2$s ピクセルです。"
+msgstr "プロフィールのバナー画像をアップロードしてください。推奨サイズは %1$s×%2$s ピクセルです。"
 
 msgid "Store Name"
-msgstr "ショップ名"
+msgstr "クリエイター名"
 
 msgid "Date"
 msgstr "日付"
@@ -224,13 +224,13 @@ msgid "Your information has been saved successfully"
 msgstr "保存しました"
 
 msgid "Store type required"
-msgstr "ショップの種類を選択してください"
+msgstr "販売者の種別を選択してください"
 
 msgid "Invalid email"
 msgstr "メールアドレスが正しくありません"
 
 msgid "Store name required"
-msgstr "ショップ名を入力してください"
+msgstr "クリエイター名を入力してください"
 
 msgid "Please add Terms & Conditions content before saving the settings."
 msgstr "保存する前に、利用規約の内容を入力してください。"
@@ -302,7 +302,7 @@ msgid "No Title"
 msgstr "（無題）"
 
 msgid "Visit Store"
-msgstr "ショップを見る"
+msgstr "プロフィールページを見る"
 
 msgid "Edit Account"
 msgstr "アカウント設定"
@@ -464,7 +464,7 @@ msgid "Map"
 msgstr "地図"
 
 msgid "Show email address in store"
-msgstr "ショップにメールアドレスを表示する"
+msgstr "プロフィールにメールアドレスを表示する"
 
 msgid "Store is open"
 msgstr "営業中"
@@ -1065,7 +1065,7 @@ msgid "Upload Photo"
 msgstr "写真をアップロード"
 
 msgid "store name"
-msgstr "ショップ名"
+msgstr "クリエイター名"
 
 msgid "Phone No"
 msgstr "電話番号"
@@ -1074,7 +1074,7 @@ msgid "+123456.."
 msgstr "例：09012345678"
 
 msgid "Show terms and conditions in store page"
-msgstr "ショップページに利用規約を表示する"
+msgstr "プロフィールページに利用規約を表示する"
 
 msgid "TOC Details"
 msgstr "利用規約の内容"
@@ -1315,7 +1315,7 @@ msgid "Relevance"
 msgstr "関連度順"
 
 msgid "More Products"
-msgstr "このショップの他の商品"
+msgstr "このクリエイターの他の商品"
 
 msgid "Vendor Info"
 msgstr "出品者情報"
@@ -1329,7 +1329,7 @@ msgid "Enter product name"
 msgstr "商品名で探す"
 
 msgid "Search Vendors"
-msgstr "ショップを探す"
+msgstr "クリエイターを探す"
 
 msgid "Sort by"
 msgstr "並び替え"
@@ -1344,17 +1344,17 @@ msgid "Random"
 msgstr "ランダム"
 
 msgid "Store"
-msgstr "ショップ"
+msgstr "クリエイター"
 
 msgid "Become a Vendor"
 msgstr "出品者になる"
 
 msgid "Vendors can sell products and manage a store with a vendor dashboard."
-msgstr "出品者になると、商品を出品し、専用の管理画面でショップを運営できます。"
+msgstr "出品者になると、商品を出品し、専用の管理画面でプロフィールや商品を管理できます。"
 
 msgid "Total store showing: %s"
 msgid_plural "Total stores showing: %s"
-msgstr[0] "表示中のショップ：%s件"
+msgstr[0] "表示中のクリエイター：%s件"
 
 # --- dashboard leftovers found by scanning the rendered pages (2026-09-12) ---
 
@@ -1427,10 +1427,10 @@ msgid "Chat with us"
 msgstr "チャットで問い合わせ"
 
 msgid "Visit Shop"
-msgstr "ショップを見る"
+msgstr "プロフィールページを見る"
 
 msgid "Visit Stores"
-msgstr "ショップ一覧を見る"
+msgstr "クリエイター一覧を見る"
 
 msgid "Visit Vendor Dashboard"
 msgstr "出品者ダッシュボードを見る"
@@ -1464,10 +1464,10 @@ msgid "Last Name"
 msgstr "姓（例：山田）"
 
 msgid "Shop Name"
-msgstr "ショップ名"
+msgstr "クリエイター名"
 
 msgid "Shop URL"
-msgstr "ショップのURL"
+msgstr "ページのURL"
 
 msgid "Phone Number"
 msgstr "電話番号"
@@ -1544,13 +1544,13 @@ msgid "Please enter your phone number."
 msgstr "電話番号を入力してください。"
 
 msgid "Please provide a shop name."
-msgstr "ショップ名を入力してください。"
+msgstr "クリエイター名を入力してください。"
 
 msgid "Please provide a unique shop URL."
-msgstr "ショップのURLを入力してください。"
+msgstr "ページのURLを入力してください。"
 
 msgid "Shop URL is not available"
-msgstr "このショップのURLはすでに使われています。別のURLを入力してください。"
+msgstr "このURLはすでに使われています。別のURLを入力してください。"
 
 msgid "Not Available"
 msgstr "使用できません"
@@ -1581,7 +1581,7 @@ msgid "Marketplace Discount"
 msgstr "運営負担の割引"
 
 msgid "Store Discount"
-msgstr "ショップ負担の割引"
+msgstr "クリエイター負担の割引"
 
 msgid "Total Vendor Discount"
 msgstr "出品者負担の割引合計"
