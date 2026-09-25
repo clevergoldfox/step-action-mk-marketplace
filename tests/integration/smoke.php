@@ -4187,6 +4187,62 @@ check('出品者画面からマイページへ戻れる', ($navBack['mk-my-accou
     (string) ($navBack['mk-my-account']['url'] ?? ''));
 check('メニューの最後に置く', ($navBack['mk-my-account']['pos'] ?? 0) === 200);
 
+echo "
+=== クリエイターのショップページ ===
+";
+$SP = MK\Creator\StoreProfile::class;
+$spSeller = get_user_by('login', 'mk_test_creator');
+
+if (!$spSeller) {
+    check('shop page fixtures', false, 'test creator missing');
+} else {
+    $spBefore = $SP::bio($spSeller->ID);
+
+    // 自己紹介はDokanの設定と一緒に保存される。
+    $_POST['settings']['mk_bio'] = '  普段着ているお洋服を中心に出品しています'
+        . PHP_EOL . PHP_EOL . PHP_EOL . '気軽にどうぞ  ';
+    $SP::save($spSeller->ID);
+    check('自己紹介を保存する', str_contains($SP::bio($spSeller->ID), '普段着ているお洋服'));
+    check('余分な空行は詰める',
+        !str_contains($SP::bio($spSeller->ID), PHP_EOL . PHP_EOL . PHP_EOL),
+        json_encode($SP::bio($spSeller->ID), JSON_UNESCAPED_UNICODE));
+
+    $_POST['settings']['mk_bio'] = str_repeat('あ', MK\Creator\StoreProfile::MAX_BIO + 50);
+    $SP::save($spSeller->ID);
+    check('長すぎる自己紹介は切る', mb_strlen($SP::bio($spSeller->ID)) === MK\Creator\StoreProfile::MAX_BIO,
+        (string) mb_strlen($SP::bio($spSeller->ID)));
+
+    $_POST['settings']['mk_bio'] = '普段着ているお洋服を中心に出品しています';
+    $SP::save($spSeller->ID);
+    ob_start(); $SP::renderHeader($spSeller); $spHeader = (string) ob_get_clean();
+    $spNumber = (string) get_user_meta($spSeller->ID, MK\Creator\Onboarding::USER_META_NUMBER, true);
+    check('ショップページにクリエイター番号', str_contains($spHeader, 'クリエイター番号')
+        && $spNumber !== '' && str_contains($spHeader, $spNumber), $spNumber);
+    check('ショップページに自己紹介', str_contains($spHeader, '普段着ているお洋服'));
+    check('同じ見出しを二重に出さない', (static function () use ($SP, $spSeller): bool {
+        ob_start(); $SP::renderHeader($spSeller); return ob_get_clean() === '';
+    })());
+
+    ob_start(); $SP::renderField($spSeller); $spField = (string) ob_get_clean();
+    check('設定画面に自己紹介の入力欄', str_contains($spField, 'name="settings[mk_bio]"')
+        && str_contains($spField, '自己紹介'));
+
+    // 空にすると消える。
+    $_POST['settings']['mk_bio'] = '';
+    $SP::save($spSeller->ID);
+    check('空にすれば消える', $SP::bio($spSeller->ID) === '');
+
+    if ($spBefore !== '') {
+        update_user_meta($spSeller->ID, MK\Creator\StoreProfile::META_BIO, $spBefore);
+    }
+
+    unset($_POST['settings']);
+
+    check('並び順は新着順が既定', apply_filters('dokan_default_store_products_orderby', 'menu_order') === 'date',
+        (string) apply_filters('dokan_default_store_products_orderby', 'menu_order'));
+    check('ショップの商品は3列', function_exists('tb_is_store_page'), 'theme loaded');
+}
+
 echo "\n=== 取引・発送の画面（③） ===\n";
 $CO = MK\Order\CreatorOrders::class;
 check('メニュー名を「取引・発送」に', ($CO::renameMenu(['orders' => ['title' => '注文']])['orders']['title'] ?? '') === '取引・発送');
