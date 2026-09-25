@@ -4423,6 +4423,61 @@ if ($rkViewer) {
 }
 
 echo "
+=== クリエイター一覧ページ ===
+";
+$SL = MK\Creator\StoreListing::class;
+$slDefaults = apply_filters('dokan_store_listing_per_page', ['per_page' => 10]);
+check('一覧は1ページに48人', ($slDefaults['per_page'] ?? 0) === MK\Creator\StoreListing::PER_PAGE,
+    (string) ($slDefaults['per_page'] ?? 0));
+
+$slSeller = get_user_by('login', 'mk_test_creator');
+
+if ($slSeller) {
+    ob_start(); $SL::renderNumber($slSeller); $slCard = (string) ob_get_clean();
+    $slNumber = (string) get_user_meta($slSeller->ID, MK\Creator\Onboarding::USER_META_NUMBER, true);
+    check('カードにクリエイター番号', str_contains($slCard, 'mk-listing-number')
+        && $slNumber !== '' && str_contains($slCard, $slNumber), $slNumber);
+}
+
+// 件数は _n() で出る。複数形は msgid と msgid_plural をNULでつないだ一つの
+// 見出しで .mo に入る -- 単数形だけ入れても _n() は見にいかない（2026-09-26）。
+check('件数表示が日本語',
+    _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite') === '表示中のクリエイター：%s件',
+    _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite'));
+
+echo "
+=== 発送期限は赤字 ===
+";
+$ddCreator = get_user_by('login', 'mk_test_creator');
+
+if (!$ddCreator) {
+    check('発送期限の表示', false, 'test creator missing');
+} else {
+    $ddOrder = wc_create_order(['status' => 'pending']);
+    $ddOrder->update_meta_data('_mk_creator_id', $ddCreator->ID);
+    $ddOrder->update_meta_data(MK\Order\DispatchDeadline::META_DISPATCH, '2-3');
+    $ddOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT, gmdate('Y-m-d H:i:s', time() + 2 * DAY_IN_SECONDS));
+    $ddOrder->set_status(MK\Order\Statuses::PAID);
+    $ddOrder->save();
+
+    $ddBefore = get_current_user_id();
+    wp_set_current_user($ddCreator->ID);
+
+    ob_start(); MK\Order\DispatchDeadline::renderForCreator(wc_get_order($ddOrder->get_id()));
+    $ddPanel = (string) ob_get_clean();
+
+    check('クリエイター側の発送期限に赤字クラス', str_contains($ddPanel, 'class="mk-due"'),
+        $ddPanel === '' ? '(パネルが出ない)' : '');
+    check('期限の日付が入っている',
+        str_contains($ddPanel, MK\Order\DispatchDeadline::dueLabel(wc_get_order($ddOrder->get_id()))),
+        MK\Order\DispatchDeadline::dueLabel(wc_get_order($ddOrder->get_id())));
+
+    wp_set_current_user($ddBefore);
+    wc_get_order($ddOrder->get_id())->delete(true);
+    check('発送期限テストの後片付け', !wc_get_order($ddOrder->get_id()));
+}
+
+echo "
 === 「ショップ」ではなく「クリエイター」 ===
 ";
 check('Store Name', __('Store Name', 'dokan-lite') === 'クリエイター名', __('Store Name', 'dokan-lite'));

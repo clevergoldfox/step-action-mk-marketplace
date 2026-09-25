@@ -242,7 +242,7 @@ final class DispatchDeadline
 
             printf(
                 '<section class="mk-dispatch"><h2>発送予定</h2>'
-                . '<p>出品者は <strong>%s頃まで</strong>に発送する予定です（%s）。'
+                . '<p>出品者は <strong class="mk-due">%s頃まで</strong>に発送する予定です（%s）。'
                 . '発送されるとメールでお知らせします。</p></section>',
                 esc_html(self::dueLabel($order)),
                 esc_html(Details::dispatchLabel((string) $order->get_meta(self::META_DISPATCH)))
@@ -336,7 +336,7 @@ final class DispatchDeadline
 
         printf(
             '<div class="dokan-alert dokan-alert-info">'
-            . '出品時にお約束した発送期限は <strong>%s</strong> です。'
+            . '出品時にお約束した発送期限は <strong class="mk-due">%s</strong> です。'
             . '期限を過ぎると購入者がキャンセルを申請できるようになります。</div>',
             esc_html(self::dueLabel($order))
         );

@@ -173,7 +173,7 @@ final class VideoDelivery
 
         printf(
             '<p class="mk-field-help">撮影した動画をご自身のVimeoアカウントに<strong>限定公開</strong>でアップロードし、'
-            . 'そのURLを貼り付けて送信してください。送信期限：<strong>%s</strong></p>',
+            . 'そのURLを貼り付けて送信してください。送信期限：<strong class="mk-due">%s</strong></p>',
             esc_html(DispatchDeadline::dueLabel($order))
         );
 
@@ -442,7 +442,7 @@ final class VideoDelivery
                     . '運営が内容を確認のうえ、対応を決定いたします。結果はメールでお知らせします。</p>';
             } else {
                 printf(
-                    '<p class="mk-video-panel__notice">クリエイターが撮影中です。<strong>%s頃まで</strong>に送信される予定です。'
+                    '<p class="mk-video-panel__notice">クリエイターが撮影中です。<strong class="mk-due">%s頃まで</strong>に送信される予定です。'
                     . '送信されるとメールでお知らせします。</p>',
                     esc_html(DispatchDeadline::dueLabel($order))
                 );
