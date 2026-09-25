@@ -74,6 +74,54 @@ if ($fixtureCreator) {
     });
 }
 
+// Fixtures from a run that did not reach its own cleanup. Two of these were
+// still on the live site a week later, on the クリエイター一覧 page, for the
+// client to find (2026-09-25).
+//
+// Finding them is automatic; removing them is not. Deleting a user on a live
+// site is not something a test run should do behind whoever started it, so
+// this lists what it found and stops there unless MK_SMOKE_SWEEP=1:
+//
+//     MK_SMOKE_SWEEP=1 /usr/bin/php8.3 /usr/bin/wp eval-file <this file>
+//
+// Every fixture user is created with this prefix and no email address, so
+// that pair identifies them without touching anyone real; an administrator
+// is never removed whatever they are called.
+require_once ABSPATH . 'wp-admin/includes/user.php';
+
+echo "=== 前回の残骸 ===\n";
+$straySweep = getenv('MK_SMOKE_SWEEP') === '1';
+$strays     = [];
+
+foreach (get_users(['search' => 'mk_smoke_*', 'search_columns' => ['user_login'], 'number' => 200]) as $stray) {
+    if ($stray->user_email !== '' || user_can($stray->ID, 'administrator')) {
+        continue;
+    }
+
+    $strays[] = $stray->user_login;
+
+    if (!$straySweep) {
+        continue;
+    }
+
+    foreach (wc_get_orders(['customer' => $stray->ID, 'limit' => -1, 'return' => 'ids']) as $strayOrder) {
+        $strayObject = wc_get_order($strayOrder);
+
+        if ($strayObject) {
+            $strayObject->delete(true);
+        }
+    }
+
+    $GLOBALS['wpdb']->delete($GLOBALS['wpdb']->prefix . 'dokan_orders', ['seller_id' => $stray->ID], ['%d']);
+    wp_delete_user($stray->ID);
+}
+
+// Reported, not required: a leftover breaks nothing, and the decision to
+// delete one belongs to whoever is running this.
+check('前回の残骸', true, $strays === []
+    ? 'なし'
+    : count($strays) . '件' . ($straySweep ? 'を削除: ' : '（MK_SMOKE_SWEEP=1 で削除）: ') . implode(', ', $strays));
+
 $mkStatuses = [MK\Order\Statuses::PAID, MK\Order\Statuses::SHIPPED, MK\Order\Statuses::RECEIVED];
 
 echo "\n=== order statuses: registered ===\n";
@@ -1025,6 +1073,7 @@ if (is_wp_error($cbSeller) || is_wp_error($cbBuyer)) {
     wc_get_order($exId)->delete(true);
     wc_get_order($raceId)->delete(true);
     require_once ABSPATH . 'wp-admin/includes/user.php';
+    $wpdb->delete($wpdb->prefix . 'dokan_orders', ['seller_id' => $cbSeller], ['%d']);
     wp_delete_user($cbSeller); wp_delete_user($cbBuyer);
     remove_filter('mk_should_notify', $muteCb, 99);
     check('チャージバックの後片付け', !wc_get_order($cbId) && !get_userdata($cbSeller));
