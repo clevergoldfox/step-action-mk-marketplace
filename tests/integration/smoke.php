@@ -4446,6 +4446,26 @@ check('件数表示が日本語',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite'));
 
 echo "
+=== 発送方法の案内 ===
+";
+// クリエイターが初めて売れたときに、どう渡せばいいのか分かるように（2026-09-26）。
+check('三つの方法が定義されている', count(MK\Order\Shipping::METHODS) === 3,
+    implode(' / ', MK\Order\Shipping::METHODS));
+
+foreach (['集荷', '営業所', 'コンビニ'] as $shipWord) {
+    check('「' . $shipWord . '」がある',
+        str_contains(implode(' ', MK\Order\Shipping::METHODS), $shipWord));
+}
+
+$shipSource = file_get_contents(WP_PLUGIN_DIR . '/mk-marketplace/src/Order/Shipping.php');
+check('発送登録の画面に出す', str_contains((string) $shipSource, 'mk-shipping-methods')
+    && str_contains((string) $shipSource, '発送方法は、ご都合のよい方法をお選びください。'));
+
+$shipMail = file_get_contents(WP_PLUGIN_DIR . '/mk-marketplace/src/Notify/Events.php');
+check('売れたときのお知らせにも入れる',
+    str_contains((string) $shipMail, 'Shipping::METHODS'));
+
+echo "
 === 発送期限は赤字 ===
 ";
 $ddCreator = get_user_by('login', 'mk_test_creator');

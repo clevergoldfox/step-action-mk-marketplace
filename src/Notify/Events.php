@@ -146,11 +146,14 @@ final class Events
                 "「%s」が購入されました。\n\n"
                 . "ご注文番号：#%d\n"
                 . "お受け取り予定額：%s（手数料差引後）\n\n"
-                . "発送の準備が整いましたら、出品者ダッシュボードから発送登録を行ってください。\n"
+                . "発送方法は、ご都合のよい方法をお選びください。\n"
+                . "%s\n\n"
+                . "発送が済みましたら、出品者ダッシュボードから発送登録を行ってください。\n"
                 . "発送登録を行わないと取引が進みません。",
                 $title,
                 $order->get_id(),
-                Money::format($creator)
+                Money::format($creator),
+                '・' . implode("\n・", Shipping::METHODS)
             ),
             short: sprintf('「%s」が購入されました。発送登録をお願いします。', $title),
             url: dokan_get_navigation_url('orders'),

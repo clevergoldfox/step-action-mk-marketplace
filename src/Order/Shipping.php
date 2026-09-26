@@ -35,6 +35,21 @@ use WC_Order;
  */
 final class Shipping
 {
+    /**
+     * The three ways to hand a parcel over.
+     *
+     * A creator selling their first item does not necessarily know that a
+     * carrier will come to the house, and may put off posting for want of a
+     * trip to a depot -- which is the deadline missed and the buyer waiting
+     * (client, 2026-09-26). Kept as one list, used by the dashboard panel
+     * and by the "you have sold something" mail, so the two cannot drift.
+     */
+    public const METHODS = [
+        'ご自宅への集荷を依頼する',
+        '配送会社の営業所へ持ち込む',
+        'コンビニなどの取扱店へ持ち込む',
+    ];
+
     public const META_CARRIER_ID   = '_mk_carrier_id';
     public const META_CARRIER_NAME = '_mk_carrier_name';
     public const META_TRACKING     = '_mk_tracking_number';
@@ -117,6 +132,16 @@ final class Shipping
         echo '<div class="dokan-panel dokan-panel-default mk-shipping">';
         echo '<div class="dokan-panel-heading"><strong>発送登録</strong></div>';
         echo '<div class="dokan-panel-body">';
+
+        echo '<div class="mk-shipping-methods">'
+            . '<p class="mk-shipping-methods__title">発送方法は、ご都合のよい方法をお選びください。</p><ul>';
+
+        foreach (self::METHODS as $method) {
+            printf('<li>%s</li>', esc_html($method));
+        }
+
+        echo '</ul><p class="mk-shipping-methods__note">'
+            . '発送が済みましたら、下記に配送会社と追跡番号をご登録ください。</p></div>';
 
         printf('<form method="post" action="%s">', esc_url($action));
 
