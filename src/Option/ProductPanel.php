@@ -57,7 +57,7 @@ final class ProductPanel
         echo '<div class="dokan-section-heading"><h2>オプション設定</h2>';
         printf(
             '<p class="dokan-section-desc">この商品で提供するオプションと価格を設定します。'
-            . '<strong>「表示する」のチェックを外したオプションは、この商品の購入画面に表示されません。</strong>'
+            . '<strong>「購入画面に表示する」のチェックを外したオプションは、この商品の購入画面に表示されません。</strong>'
             . '商品ごとに選べます。<br>'
             . 'オプション売上には %s%% の運営手数料がかかります'
             . '（受取額はご入力額の約 %d%% です）。</p>',
@@ -84,14 +84,16 @@ final class ProductPanel
 
             echo '<li class="mk-option-row">';
 
+            // The name first: 「表示する」 above it asked the creator to agree
+            // to something before saying what (client, 2026-09-26).
+            printf('<p class="mk-option-row__name">%s</p>', esc_html((string) $group->name));
+
             printf(
                 '<label class="mk-option-row__show"><input type="checkbox" name="mk_option[%d][offered]" value="1"%s>'
-                . '<span>表示する</span></label>',
+                . '<span>購入画面に表示する</span></label>',
                 $gid,
                 $offered ? ' checked' : ''
             );
-
-            printf('<p class="mk-option-row__name">%s</p>', esc_html((string) $group->name));
 
             printf(
                 '<p class="mk-option-row__price"><label for="mk-option-price-%1$d">価格（円・税込）</label>'

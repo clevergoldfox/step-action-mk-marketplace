@@ -1630,3 +1630,40 @@ msgstr "ファイルを選ぶ"
 
 msgid "Insert file URL"
 msgstr "ファイルのURLを挿入"
+
+# --- the tag/brand picker on the listing form (select2, 2026-09-26) ---
+msgid "No matches found"
+msgstr "見つかりませんでした"
+
+msgid "Loading failed"
+msgstr "読み込みに失敗しました"
+
+msgid "Searching&hellip;"
+msgstr "検索しています…"
+
+msgid "Loading more results&hellip;"
+msgstr "さらに読み込んでいます…"
+
+msgid "Please enter 1 or more characters"
+msgstr "1文字以上入力してください"
+
+msgid "Please enter %qty% or more characters"
+msgstr "%qty%文字以上入力してください"
+
+msgid "Please enter 3 or more characters"
+msgstr "3文字以上入力してください"
+
+msgid "Please delete 1 character"
+msgstr "1文字削除してください"
+
+msgid "Please delete %qty% characters"
+msgstr "%qty%文字削除してください"
+
+msgid "One result is available, press enter to select it."
+msgstr "候補が1件あります。Enterキーで選択できます。"
+
+msgid "%qty% results are available, use up and down arrow keys to navigate."
+msgstr "候補が%qty%件あります。上下キーで選べます。"
+
+msgid "You can only select 1 item"
+msgstr "1件のみ選択できます"

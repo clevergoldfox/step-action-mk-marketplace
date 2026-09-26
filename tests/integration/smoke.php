@@ -4446,6 +4446,31 @@ check('件数表示が日本語',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite'));
 
 echo "
+=== 出品フォームの日本語 ===
+";
+// タグ欄の候補表示はselect2のもの。Dokanがサーバー側で訳文を渡している。
+foreach ([
+    'No matches found'                   => '見つかりませんでした',
+    'Loading failed'                     => '読み込みに失敗しました',
+    'Searching&hellip;'                  => '検索しています…',
+    'Please enter 1 or more characters'  => '1文字以上入力してください',
+    'Loading more results&hellip;'       => 'さらに読み込んでいます…',
+] as $tagEn => $tagJa) {
+    check('タグ欄：' . $tagEn, __($tagEn, 'dokan-lite') === $tagJa, __($tagEn, 'dokan-lite'));
+}
+
+$optSource = file_get_contents(WP_PLUGIN_DIR . '/mk-marketplace/src/Option/ProductPanel.php');
+check('オプションは商品名が先', (static function (string $src): bool {
+    $name   = strpos($src, 'mk-option-row__name');
+    $toggle = strpos($src, 'mk-option-row__show');
+
+    return $name !== false && $toggle !== false && $name < $toggle;
+})((string) $optSource));
+check('チェックの文言は「購入画面に表示する」',
+    str_contains((string) $optSource, '購入画面に表示する')
+    && !str_contains((string) $optSource, '<span>表示する</span>'));
+
+echo "
 === 発送方法の案内 ===
 ";
 // クリエイターが初めて売れたときに、どう渡せばいいのか分かるように（2026-09-26）。
