@@ -405,6 +405,8 @@ if (is_wp_error($gateUser)) {
 
 echo "\n=== scheduled actions ===\n";
 check('daily digest', as_has_scheduled_action('mk_send_daily_digest', [], 'mk-marketplace'));
+// 予約だけあって受け手がいない状態が17日続いていた（2026-09-26）。
+check('daily digest に受け手がいる', has_action('mk_send_daily_digest') !== false);
 check('reservation sweeper', as_has_scheduled_action('mk_sweep_reservations', [], 'mk-marketplace'));
 
 echo "\n=== webhook route ===\n";
@@ -4444,6 +4446,53 @@ if ($slSeller) {
 check('件数表示が日本語',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite') === '表示中のクリエイター：%s件',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite'));
+
+echo "
+=== 運営向け日次メモ ===
+";
+$dgCounts = MK\Notify\Digest::counts();
+check('数えるものが5種類そろっている',
+    count(array_intersect_key($dgCounts, array_flip(['applications', 'reports', 'overdue', 'awaiting', 'sales']))) === 5,
+    wp_json_encode($dgCounts, JSON_UNESCAPED_UNICODE));
+
+foreach (['applications', 'reports', 'overdue', 'awaiting', 'sales', 'gross'] as $dgKey) {
+    check('  ' . $dgKey . ' が数値', is_int($dgCounts[$dgKey] ?? null), (string) ($dgCounts[$dgKey] ?? 'null'));
+}
+
+// 送るのは対応が必要なときだけ。何もない日に送ると、読まれなくなる。
+$dgSent = [];
+$dgSpy  = static function (array $args) use (&$dgSent): array {
+    $dgSent[] = $args;
+
+    return $args;
+};
+add_filter('wp_mail', $dgSpy, 99);
+add_filter('pre_wp_mail', '__return_true', 99);
+
+$dgQuiet = static fn (): array => ['applications' => 0, 'reports' => 0, 'overdue' => 0,
+    'awaiting' => 3, 'sales' => 2, 'gross' => 5000];
+add_filter('mk_digest_counts', $dgQuiet, 99);
+MK\Notify\Digest::send();
+check('対応不要の日は送らない', $dgSent === [], count($dgSent) . '通');
+remove_filter('mk_digest_counts', $dgQuiet, 99);
+
+$dgBusy = static fn (): array => ['applications' => 2, 'reports' => 1, 'overdue' => 4,
+    'awaiting' => 3, 'sales' => 2, 'gross' => 5000];
+add_filter('mk_digest_counts', $dgBusy, 99);
+MK\Notify\Digest::send();
+check('対応が必要な日は運営に送る', $dgSent !== [], count($dgSent) . '通');
+
+$dgBody = $dgSent[0]['message'] ?? '';
+check('審査待ちの件数が入る', str_contains($dgBody, '事業者申請の審査待ち：2件'));
+check('未対応の通報が入る', str_contains($dgBody, 'キャンセル申請・通報の未対応：1件'));
+check('発送遅れが入る', str_contains($dgBody, '発送期限を過ぎている取引：4件'));
+check('管理画面へのリンクが入る', str_contains($dgBody, 'page=mk-business'));
+check('件名は運営メモ', str_contains((string) ($dgSent[0]['subject'] ?? ''), '本日の運営メモ'),
+    (string) ($dgSent[0]['subject'] ?? ''));
+
+remove_filter('mk_digest_counts', $dgBusy, 99);
+remove_filter('wp_mail', $dgSpy, 99);
+remove_filter('pre_wp_mail', '__return_true', 99);
 
 echo "
 === 出品フォームの日本語 ===

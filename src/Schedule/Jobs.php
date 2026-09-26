@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace MK\Schedule;
 
+use MK\Notify\Digest;
 use MK\Order\Statuses;
 use MK\Stripe\TransferService;
 use WC_Order;
@@ -40,6 +41,10 @@ final class Jobs
         add_action(self::MASK_ADDRESS, [self::class, 'runMaskAddress'], 10, 1);
         add_action(self::DISPATCH_OVERDUE, [self::class, 'runDispatchOverdue'], 10, 1);
         add_action(self::SWEEP_RESERVATIONS, [self::class, 'runSweepReservations']);
+        // Scheduled since the beginning with nothing listening: Action
+        // Scheduler logged "no callback registered" every morning for
+        // seventeen days before giving up (found 2026-09-26).
+        add_action(self::DAILY_DIGEST, [Digest::class, 'send']);
 
         add_action('init', [self::class, 'ensureRecurringScheduled']);
     }
