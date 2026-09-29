@@ -4448,6 +4448,141 @@ check('件数表示が日本語',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite'));
 
 echo "
+=== メールの差出人 ===
+";
+// 通知の見出しが「WordPress」のままだった（2026-09-29、クライアント報告）。
+check('差出人名はサイト名', apply_filters('wp_mail_from_name', 'WordPress') === get_bloginfo('name'),
+    apply_filters('wp_mail_from_name', 'WordPress'));
+check('差出人はこのドメイン',
+    str_ends_with(apply_filters('wp_mail_from', 'wordpress@treasure-buzz.com'), '@treasure-buzz.com'),
+    apply_filters('wp_mail_from', 'wordpress@treasure-buzz.com'));
+check('運営が設定した差出人は上書きしない',
+    apply_filters('wp_mail_from', 'info@step-action.com') === 'info@step-action.com');
+
+$miMail = apply_filters('wp_mail', ['to' => 'a@example.com', 'subject' => 's', 'message' => 'm', 'headers' => []]);
+check('返信先がある', (static function (array $mail): bool {
+    foreach ((array) ($mail['headers'] ?? []) as $header) {
+        if (stripos((string) $header, 'reply-to:') === 0) {
+            return true;
+        }
+    }
+
+    return false;
+})($miMail), wp_json_encode($miMail['headers'] ?? [], JSON_UNESCAPED_UNICODE));
+
+echo "
+=== 広告（運営が自分で入れ替えられる） ===
+";
+$AD = MK\Ad\Service::class;
+check('広告の投稿タイプがある', post_type_exists(MK\Ad\Service::POST_TYPE));
+check('表示場所は2種類', count($AD::placements()) === 2, implode(' / ', $AD::placements()));
+check('表示する相手は3種類', count($AD::audiences()) === 3, implode(' / ', $AD::audiences()));
+
+$adImage = null;
+$adIds   = [];
+
+// つくった広告で：出し分けと掲載期間。
+$adUploads = wp_get_upload_dir();
+$adFile    = $adUploads['path'] . '/mk-smoke-ad-' . wp_generate_password(6, false) . '.png';
+$adCanvas  = new Imagick();
+$adCanvas->newImage(1200, 400, new ImagickPixel('#333333'));
+$adCanvas->setImageFormat('png');
+$adCanvas->writeImage($adFile);
+$adCanvas->clear();
+$adImage = wp_insert_attachment(['post_mime_type' => 'image/png', 'post_title' => 'smoke ad',
+    'post_status' => 'inherit'], $adFile);
+
+foreach ([
+    ['men', MK\Ad\Service::PLACEMENT_BANNER, '', ''],
+    ['women', MK\Ad\Service::PLACEMENT_BANNER, '', ''],
+    ['all', MK\Ad\Service::PLACEMENT_BANNER, '', ''],
+    ['all', MK\Ad\Service::PLACEMENT_POPUP, '', ''],
+    ['all', MK\Ad\Service::PLACEMENT_BANNER, gmdate('Y-m-d', time() + 7 * DAY_IN_SECONDS), ''],
+    ['all', MK\Ad\Service::PLACEMENT_BANNER, '', gmdate('Y-m-d', time() - DAY_IN_SECONDS)],
+] as $index => [$adAudience, $adPlacement, $adStarts, $adEnds]) {
+    $adId = wp_insert_post([
+        'post_type'   => MK\Ad\Service::POST_TYPE,
+        'post_title'  => 'MK一時テスト広告 ' . $index,
+        'post_status' => 'publish',
+        'menu_order'  => 90 + $index,
+    ]);
+    set_post_thumbnail($adId, $adImage);
+    update_post_meta($adId, MK\Ad\Service::META_AUDIENCE, $adAudience);
+    update_post_meta($adId, MK\Ad\Service::META_PLACEMENT, $adPlacement);
+    update_post_meta($adId, MK\Ad\Service::META_STARTS, $adStarts);
+    update_post_meta($adId, MK\Ad\Service::META_ENDS, $adEnds);
+    $adIds[] = $adId;
+}
+
+$adMen   = array_column($AD::active('banner', 'men'), 'id');
+$adWomen = array_column($AD::active('banner', 'women'), 'id');
+$adAll   = array_column($AD::active('banner', 'all'), 'id');
+
+check('メンズ向けはメンズを選んだ人に出る', in_array((string) $adIds[0], $adMen, true));
+check('メンズ向けはレディースには出ない', !in_array((string) $adIds[0], $adWomen, true));
+check('全員向けはどちらにも出る',
+    in_array((string) $adIds[2], $adMen, true) && in_array((string) $adIds[2], $adWomen, true));
+check('切り替えていない人には全員向けだけ',
+    in_array((string) $adIds[2], $adAll, true) && !in_array((string) $adIds[0], $adAll, true));
+check('ポップアップはバナーに混ざらない',
+    !in_array((string) $adIds[3], $adAll, true)
+    && in_array((string) $adIds[3], array_column($AD::active('popup', 'all'), 'id'), true));
+check('開始前の広告は出ない', !in_array((string) $adIds[4], $adAll, true));
+check('終了した広告は出ない', !in_array((string) $adIds[5], $adAll, true));
+check('掲載期間の判定', $AD::isRunning((int) $adIds[2]) && !$AD::isRunning((int) $adIds[4]));
+
+// 画像のない広告は表示しない（公開されていても）。
+$adNoImage = wp_insert_post([
+    'post_type'   => MK\Ad\Service::POST_TYPE,
+    'post_title'  => 'MK一時テスト広告 画像なし',
+    'post_status' => 'publish',
+]);
+update_post_meta($adNoImage, MK\Ad\Service::META_AUDIENCE, 'all');
+update_post_meta($adNoImage, MK\Ad\Service::META_PLACEMENT, MK\Ad\Service::PLACEMENT_BANNER);
+$adIds[] = $adNoImage;
+check('画像のない広告は表示しない',
+    !in_array((string) $adNoImage, array_column($AD::active('banner', 'all'), 'id'), true));
+
+foreach ($adIds as $adId) {
+    wp_delete_post((int) $adId, true);
+}
+
+wp_delete_attachment((int) $adImage, true);
+@unlink($adFile);
+check('広告テストの後片付け', get_post((int) $adIds[0]) === null);
+
+echo "
+=== 商品の「対象」 ===
+";
+$PD = MK\Product\Details::class;
+check('対象は3種類', count($PD::audiences()) === 3, implode(' / ', $PD::audiences()));
+
+$pdProduct = new WC_Product_Simple();
+$pdProduct->set_name('MK一時テスト：対象');
+$pdProduct->set_regular_price(1000);
+$pdProduct->save();
+$pdId = $pdProduct->get_id();
+
+check('未設定なら「指定なし」', $PD::audienceOf($pdId) === 'all', $PD::audienceOf($pdId));
+
+$_POST['mk_audience'] = 'women';
+$PD::save($pdId);
+check('レディースとして保存できる', $PD::audienceOf($pdId) === 'women', $PD::audienceOf($pdId));
+
+$_POST['mk_audience'] = 'all';
+$PD::save($pdId);
+check('指定なしに戻すと記録を残さない',
+    $PD::audienceOf($pdId) === 'all' && get_post_meta($pdId, MK\Product\Details::META_AUDIENCE, true) === '');
+
+$_POST['mk_audience'] = 'nonsense';
+$PD::save($pdId);
+check('知らない値は受け付けない', $PD::audienceOf($pdId) === 'all');
+
+unset($_POST['mk_audience']);
+wp_delete_post($pdId, true);
+check('対象テストの後片付け', wc_get_product($pdId) === false || !wc_get_product($pdId));
+
+echo "
 === 運営向け日次メモ ===
 ";
 $dgCounts = MK\Notify\Digest::counts();

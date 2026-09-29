@@ -127,6 +127,8 @@ add_action('plugins_loaded', static function (): void {
     Creator\ShopName::register();
     Creator\Search::register();
     Creator\StoreProfile::register();
+    Notify\MailIdentity::register();
+    Ad\Admin::register();
     Creator\Ranking::register();
     Creator\StoreListing::register();
     Creator\SalesAlert::register();

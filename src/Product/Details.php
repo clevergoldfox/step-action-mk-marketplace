@@ -23,6 +23,7 @@ final class Details
 {
     public const META_CONDITION = '_mk_condition';
     public const META_DISPATCH  = '_mk_dispatch';
+    public const META_AUDIENCE  = '_mk_audience';
 
     /** Used when a listing predates these fields, so every order has a deadline. */
     public const DEFAULT_DISPATCH = '2-3';
@@ -86,6 +87,32 @@ final class Details
             '2-3' => ['label' => '2〜3日で発送', 'days' => 3],
             '4-7' => ['label' => '4〜7日で発送', 'days' => 7],
         ];
+    }
+
+    /**
+     * Who an item is for.
+     *
+     * 'all' is the default and the honest one: most of what is listed here
+     * -- a mug, a keyring, a hand-made charm -- has no gender, and a creator
+     * who skips the field should not have their work disappear from half the
+     * site. It is only ever a filter, never a claim about the buyer.
+     *
+     * @return array<string, string>
+     */
+    public static function audiences(): array
+    {
+        return [
+            'all'   => '指定なし（どなたにも）',
+            'men'   => 'メンズ',
+            'women' => 'レディース',
+        ];
+    }
+
+    public static function audienceOf(int $productId): string
+    {
+        $value = (string) get_post_meta($productId, self::META_AUDIENCE, true);
+
+        return isset(self::audiences()[$value]) ? $value : 'all';
     }
 
     public static function conditionOf(int $productId): string
@@ -156,6 +183,8 @@ final class Details
 
         echo '</select></p>';
 
+        $audience = $productId > 0 ? self::audienceOf($productId) : 'all';
+
         echo '<p class="mk-details__field"><label for="mk_dispatch">発送までの日数</label>';
         echo '<select name="mk_dispatch" id="mk_dispatch" class="dokan-form-control">';
 
@@ -170,6 +199,22 @@ final class Details
 
         echo '</select>';
         echo '<small>購入代金の支払いが確認できた日から数えます。</small></p>';
+
+        echo '<p class="mk-details__field"><label for="mk_audience">対象</label>';
+        echo '<select name="mk_audience" id="mk_audience" class="dokan-form-control">';
+
+        foreach (self::audiences() as $key => $label) {
+            printf(
+                '<option value="%s"%s>%s</option>',
+                esc_attr($key),
+                selected($audience, $key, false),
+                esc_html($label)
+            );
+        }
+
+        echo '</select>';
+        echo '<small>ホーム画面で「メンズ」「レディース」を選んだ方に表示されます。'
+            . '「指定なし」はどちらを選んでいる方にも表示されます。</small></p>';
         echo '</div></div>';
     }
 
@@ -189,6 +234,16 @@ final class Details
                 update_post_meta($productId, self::META_CONDITION, $condition);
             } else {
                 delete_post_meta($productId, self::META_CONDITION);
+            }
+        }
+
+        if (isset($_POST['mk_audience'])) {
+            $audience = sanitize_key(wp_unslash((string) $_POST['mk_audience']));
+
+            if (isset(self::audiences()[$audience]) && $audience !== 'all') {
+                update_post_meta($productId, self::META_AUDIENCE, $audience);
+            } else {
+                delete_post_meta($productId, self::META_AUDIENCE);
             }
         }
 

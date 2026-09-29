@@ -106,7 +106,66 @@ final class TermsAdmin
 
         echo '</tbody></table>';
         echo '<p><button type="submit" class="button button-primary">保存する</button></p>';
-        echo '</form></div>';
+        echo '</form>';
+
+        self::renderEditLinks();
+
+        echo '</div>';
+    }
+
+    /**
+     * Every legal document, with the way in to edit it.
+     *
+     * The client's lawyer will be revising these after launch (2026-09-29),
+     * and the answer to "can we change the wording ourselves" is yes -- they
+     * are ordinary pages. What was missing was somewhere that says so and
+     * lists all four, rather than four searches through 固定ページ.
+     */
+    private static function renderEditLinks(): void
+    {
+        $documents = [
+            'terms'          => '利用規約',
+            'privacy-policy' => 'プライバシーポリシー',
+            'tokushoho'      => '特定商取引法に基づく表記',
+            'guideline'      => 'ガイドライン',
+        ];
+
+        echo '<hr><h2>規約・ポリシーの本文を編集する</h2>';
+        echo '<p>下記はいずれも通常の固定ページです。「編集」から本文を書き換えて「更新」すれば、'
+            . 'そのままサイトに反映されます。<strong>弁護士の先生からの修正指示も、この画面から反映できます。</strong></p>';
+
+        echo '<table class="widefat striped" style="max-width:900px"><thead><tr>'
+            . '<th>ページ</th><th>状態</th><th>最終更新</th><th>操作</th>'
+            . '</tr></thead><tbody>';
+
+        foreach ($documents as $slug => $title) {
+            $page = get_page_by_path($slug);
+
+            if (!$page) {
+                printf(
+                    '<tr><td>%s</td><td colspan="3"><em>ページが見つかりません（%s）</em></td></tr>',
+                    esc_html($title),
+                    esc_html($slug)
+                );
+
+                continue;
+            }
+
+            printf(
+                '<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td>'
+                . '<td><a class="button" href="%s">編集</a> '
+                . '<a class="button" href="%s" target="_blank" rel="noopener">表示</a></td></tr>',
+                esc_html($page->post_title),
+                esc_html($page->post_status === 'publish' ? '公開中' : $page->post_status),
+                esc_html(get_post_modified_time('Y/m/d H:i', false, $page) ?: '—'),
+                esc_url((string) get_edit_post_link($page->ID)),
+                esc_url((string) get_permalink($page->ID))
+            );
+        }
+
+        echo '</tbody></table>';
+        echo '<p class="description">※ 利用規約を改定された場合、改定前に登録された会員の同意記録は'
+            . '「改定前の規約に同意した」記録として残ります。</p>';
     }
 
     public static function handleSave(): void
