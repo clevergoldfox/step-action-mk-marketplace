@@ -133,7 +133,7 @@ final class Admin
 
         echo '<div class="mk-ad-field"><span class="mk-ad-label">画像</span>'
             . '<p class="description">右側の「アイキャッチ画像」から設定してください。'
-            . '横長（横1200×縦400ピクセル程度）がおすすめです。'
+            . '横長（横1200×縦800ピクセル程度）がおすすめです。'
             . '<strong>画像がないと、この広告は表示されません。</strong></p></div>';
 
         echo '<div class="mk-ad-field"><span class="mk-ad-label">並び順</span>'
