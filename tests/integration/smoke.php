@@ -1790,18 +1790,18 @@ echo "\n=== category archives are not the seller dashboard ===\n";
 // Dokan compares them without checking which was queried. Four category
 // pages rendered the dashboard shell -- blank, to a logged-out shopper.
 $dashPage = (int) (get_option('dokan_pages')['dashboard'] ?? 0);
-$collision = get_terms([
-    'taxonomy'   => 'product_cat',
-    'hide_empty' => false,
-    'include'    => [$dashPage],
-]);
 
-check('the id collision this guards against still exists',
-    !is_wp_error($collision) && count($collision) === 1,
-    'term #' . $dashPage . ' ' . (is_wp_error($collision) || !$collision ? '(none)' : $collision[0]->name));
+// The scenario is built rather than looked for. It used to depend on a term
+// happening to carry the dashboard page's id -- true until the categories
+// were replaced on 2026-09-30, after which the test failed while the bug it
+// covers was as live as ever. A term with that id is what the guard has to
+// survive, so the test makes one rather than waiting for WordPress to.
+$anyTerm = get_terms(['taxonomy' => 'product_cat', 'hide_empty' => false, 'number' => 1]);
 
-if (!is_wp_error($collision) && $collision) {
-    $term = $collision[0];
+if ($dashPage > 0 && !is_wp_error($anyTerm) && $anyTerm) {
+    $term = clone $anyTerm[0];
+    $term->term_id          = $dashPage;
+    $term->term_taxonomy_id = $dashPage;
 
     global $wp_query;
     $realQuery = $wp_query;
@@ -1817,6 +1817,8 @@ if (!is_wp_error($collision) && $collision) {
 
     check('a category archive is not treated as the dashboard', !$treatedAsDashboard,
         $treatedAsDashboard ? 'term ' . $term->term_id . ' hijacked by the dashboard' : '');
+} else {
+    check('a category archive is not treated as the dashboard', false, 'fixtures missing');
 }
 
 // The dashboard page itself must still be recognised.
