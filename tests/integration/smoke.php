@@ -4577,6 +4577,61 @@ if (!$dvCreator || $dvVideoId === 0) {
 check('デジタルコンテンツは出品できない',
     !(bool) apply_filters('mk_message_video_listing_enabled', false));
 
+// 購入時のリクエスト入力（2026-10-02）。オプションでも、以前の出品と同じ
+// 三つのこと（種類・お名前・内容）を聞く。
+$rqTypes = MK\Product\MessageVideo::activeTypes();
+check('種類は運営の一覧から出す', count($rqTypes) >= 3, implode(' / ', array_keys($rqTypes)));
+
+$rqFields = MK\Product\MessageVideo::renderRequestFields($rqTypes, 'メッセージ');
+check('入力欄に種類・名前・内容がある',
+    str_contains($rqFields, 'mk_message_type') && str_contains($rqFields, 'mk_request_name')
+    && str_contains($rqFields, 'mk_request_body'));
+check('同意のチェックも出る', str_contains($rqFields, 'mk_request_agree'));
+
+$rqKey = (string) array_key_first($rqTypes);
+
+try {
+    MK\Product\MessageVideo::validateRequestAgainst($rqTypes, ['mk_message_type' => $rqKey]);
+    check('同意なしは受け付けない', false, '例外が出なかった');
+} catch (\Throwable $e) {
+    check('同意なしは受け付けない', str_contains($e->getMessage(), '同意'), $e->getMessage());
+}
+
+try {
+    MK\Product\MessageVideo::validateRequestAgainst($rqTypes,
+        ['mk_request_agree' => '1', 'mk_message_type' => $rqKey, 'mk_request_name' => '']);
+    check('お名前なしは受け付けない', false, '例外が出なかった');
+} catch (\Throwable $e) {
+    check('お名前なしは受け付けない', str_contains($e->getMessage(), 'お名前'), $e->getMessage());
+}
+
+$rqOk = MK\Product\MessageVideo::validateRequestAgainst($rqTypes, [
+    'mk_request_agree' => '1',
+    'mk_message_type'  => $rqKey,
+    'mk_request_name'  => 'さくらちゃん',
+    'mk_request_body'  => '合格おめでとうと伝えてください',
+]);
+check('正しく入力されれば通る', $rqOk['name'] === 'さくらちゃん' && $rqOk['type'] === $rqKey,
+    wp_json_encode($rqOk, JSON_UNESCAPED_UNICODE));
+
+$rqOrder = wc_create_order(['status' => 'pending']);
+MK\Product\MessageVideo::snapshotRequestOnly($rqOrder, $rqOk);
+$rqOrder->save();
+$rqOrder = wc_get_order($rqOrder->get_id());
+
+check('注文にリクエストが残る', MK\Product\MessageVideo::hasRequest($rqOrder));
+check('それでもメッセージ動画商品にはしない',
+    !MK\Product\MessageVideo::isMessageVideoOrder($rqOrder),
+    '商品としての扱いは変えない（発送も必要なまま）');
+
+$rqSummary = MK\Product\MessageVideo::renderRequestSummary($rqOrder, false);
+check('内訳が表示できる', str_contains($rqSummary, 'さくらちゃん')
+    && str_contains($rqSummary, '合格おめでとう'));
+check('動画時間の行は出さない', !str_contains($rqSummary, '動画時間'));
+
+wc_get_order($rqOrder->get_id())->delete(true);
+check('リクエストテストの後片付け', !wc_get_order($rqOrder->get_id()));
+
 echo "
 === メールの差出人 ===
 ";

@@ -358,21 +358,57 @@ final class Controller
             echo \MK\Product\MessageVideo::renderBuyFields($product->get_id()); // escaped inside
         }
 
+        // Which of the options on offer are recordings the creator has to
+        // make afterwards. Ticking one turns the request form on.
+        $deliveryOptions = $options
+            ? (new \MK\Option\Service())->deliveryKindsFor(
+                array_map(static fn ($option) => (int) $option->option_group_id, $options)
+            )
+            : [];
+
         if ($options) {
             echo '<div class="mk-options"><p><strong>オプション</strong></p>';
 
             foreach ($options as $option) {
+                $groupId = (int) $option->option_group_id;
+
                 printf(
-                    '<label class="mk-option"><input type="checkbox" name="mk_options[]" value="%d">'
+                    '<label class="mk-option"><input type="checkbox" name="mk_options[]" value="%d"%s>'
                     . '<span class="mk-option-name">%s</span>'
                     . '<span class="mk-option-price">+%s</span></label>',
-                    (int) $option->option_group_id,
+                    $groupId,
+                    isset($deliveryOptions[$groupId]) ? ' data-mk-needs-request="1"' : '',
                     esc_html($option->name),
                     esc_html(number_format((int) $option->price) . '円')
                 );
             }
 
             echo '</div>';
+        }
+
+        if ($deliveryOptions !== []) {
+            echo '<div class="mk-request-slot" data-mk-request-slot hidden>';
+            echo \MK\Product\MessageVideo::renderRequestFields(
+                \MK\Product\MessageVideo::activeTypes(),
+                'メッセージ'
+            ); // escaped inside
+            echo '</div>';
+
+            // Hidden fields do not validate, and disabled ones are not sent.
+            // Both are switched with the tick, so a buyer who does not want a
+            // recording is never asked about one, and one who does cannot
+            // skip past it.
+            echo '<script>(function(){'
+                . 'var slot=document.querySelector("[data-mk-request-slot]");if(!slot)return;'
+                . 'var boxes=document.querySelectorAll("[data-mk-needs-request]");'
+                . 'var agree=slot.querySelector("#mk_request_agree");'
+                . 'function wanted(){for(var i=0;i<boxes.length;i++){if(boxes[i].checked)return true;}return false;}'
+                . 'function sync(){var on=wanted();slot.hidden=!on;'
+                . 'if(agree){agree.disabled=!on;if(!on){agree.checked=false;}'
+                . 'agree.dispatchEvent(new Event("change"));}}'
+                . 'Array.prototype.forEach.call(boxes,function(b){b.addEventListener("change",sync);});'
+                . 'window.addEventListener("pageshow",sync);sync();'
+                . '})();</script>';
         }
 
         echo '<button type="submit" class="single_add_to_cart_button button alt">'
@@ -538,13 +574,26 @@ final class Controller
             ? array_map('intval', wp_unslash($_POST['mk_options']))
             : [];
 
+        // A recording among the options asks the same three questions a
+        // message-video listing did, against the whole list of occasions
+        // rather than one creator's selection from it.
+        $needsRequest = $options !== []
+            && (new \MK\Option\Service())->deliveryKindsFor($options) !== [];
+
         try {
             // Validated before any order exists, so a bad request never leaves
             // a stray unpaid order behind. Its message is buyer-facing and is
             // shown on the product page by renderError().
-            $request = $isVideo
-                ? \MK\Product\MessageVideo::validateRequest($product->get_id(), $_POST)
-                : [];
+            if ($isVideo) {
+                $request = \MK\Product\MessageVideo::validateRequest($product->get_id(), $_POST);
+            } elseif ($needsRequest) {
+                $request = \MK\Product\MessageVideo::validateRequestAgainst(
+                    \MK\Product\MessageVideo::activeTypes(),
+                    $_POST
+                );
+            } else {
+                $request = [];
+            }
 
             $order = (new OrderBuilder())->create(
                 $product,

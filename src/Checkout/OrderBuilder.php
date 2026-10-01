@@ -167,6 +167,10 @@ final class OrderBuilder
         // parcel's dispatch promise for the listing's delivery promise.
         if ($request !== [] && MessageVideo::isMessageVideo($product->get_id())) {
             MessageVideo::snapshot($order, $product->get_id(), $request);
+        } elseif ($request !== []) {
+            // The same request, bought as an option on an ordinary item. The
+            // parcel's promises are untouched: there is still a parcel.
+            MessageVideo::snapshotRequestOnly($order, $request);
         }
 
         $order->set_currency('JPY');

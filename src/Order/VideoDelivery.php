@@ -178,6 +178,14 @@ final class VideoDelivery
             return MessageVideo::renderRequestSummary($order);
         }
 
+        if (MessageVideo::hasRequest($order)) {
+            return sprintf(
+                '<p class="mk-field-help">%sのオプション付きのご注文です。</p>%s',
+                esc_html(Delivery::noun($order)),
+                MessageVideo::renderRequestSummary($order, false)
+            );
+        }
+
         return sprintf(
             '<p class="mk-field-help">%sのオプション付きのご注文です。'
             . 'ご希望の内容は、この取引のメッセージからご確認ください。</p>',
@@ -501,10 +509,11 @@ final class VideoDelivery
 
         if (MessageVideo::isMessageVideoOrder($order)) {
             echo MessageVideo::renderRequestSummary($order); // escaped inside
+        } elseif (MessageVideo::hasRequest($order)) {
+            echo MessageVideo::renderRequestSummary($order, false); // escaped inside
         } else {
-            printf(
-                '<p class="mk-video-panel__notice">ご希望の内容は、この取引のメッセージからクリエイターへお伝えください。</p>'
-            );
+            echo '<p class="mk-video-panel__notice">ご希望の内容は、この取引のメッセージから'
+                . 'クリエイターへお伝えください。</p>';
         }
 
         if (!Delivery::isDelivered($order)) {

@@ -450,8 +450,21 @@ final class MessageVideo
      */
     public static function renderBuyFields(int $productId): string
     {
-        $types = self::supportedTypes($productId);
+        return self::renderRequestFields(self::supportedTypes($productId), '動画');
+    }
 
+    /**
+     * The request form, for a listing or for an option.
+     *
+     * A listing offers the types its creator chose; an option offers all of
+     * them, because the creator never made that choice -- they ticked
+     * メッセージ動画 on a mug. Everything else is the same form, which is the
+     * point of passing the types in rather than looking them up here.
+     *
+     * @param array<string, array{label:string, description:string}> $types
+     */
+    public static function renderRequestFields(array $types, string $noun): string
+    {
         if (!$types) {
             return '';
         }
@@ -518,7 +531,10 @@ final class MessageVideo
         $html .= '</fieldset>';
 
         $html .= '<p class="mk-video-request__error" role="alert" hidden></p>';
-        $html .= '<p class="mk-video-request__note">動画はクリエイターが撮影後、取引画面からお届けします。</p>';
+        $html .= sprintf(
+            '<p class="mk-video-request__note">%sはクリエイターが用意したあと、取引画面からお届けします。</p>',
+            esc_html($noun)
+        );
 
         $html .= '</div>';
 
@@ -577,13 +593,22 @@ final class MessageVideo
      */
     public static function validateRequest(int $productId, array $post): array
     {
+        return self::validateRequestAgainst(self::supportedTypes($productId), $post);
+    }
+
+    /**
+     * @param array<string, array{label:string, description:string}> $types
+     * @param array<string,mixed> $post
+     * @return array{type:string, label:string, name:string, body:string}
+     */
+    public static function validateRequestAgainst(array $types, array $post): array
+    {
         // First, and on the server: the fields are locked in the browser until
         // this is ticked, but a locked field is not a rule.
         if (empty($post['mk_request_agree'])) {
             throw new RuntimeException('ご依頼前の注意事項をご確認のうえ、同意のチェックを入れてください。');
         }
 
-        $types = self::supportedTypes($productId);
         $type  = isset($post['mk_message_type']) ? sanitize_key(wp_unslash((string) $post['mk_message_type'])) : '';
 
         if (!isset($types[$type])) {
@@ -623,6 +648,30 @@ final class MessageVideo
      *
      * @param array{type:string, label:string, name:string, body:string} $request
      */
+    /**
+     * The request alone, for an option bought on an ordinary item.
+     *
+     * Deliberately not snapshot(): that one also writes META_KIND, which is
+     * what makes an order a message-video order -- no address, no parcel, no
+     * 発送登録. A mug with a recorded message attached still has to be posted.
+     *
+     * @param array{type:string, label:string, name:string, body:string} $request
+     */
+    public static function snapshotRequestOnly(WC_Order $order, array $request): void
+    {
+        $order->update_meta_data(self::META_TYPE_KEY, $request['type']);
+        $order->update_meta_data(self::META_TYPE_LABEL, $request['label']);
+        $order->update_meta_data(self::META_REQUEST_NAME, $request['name']);
+        $order->update_meta_data(self::META_REQUEST_BODY, $request['body']);
+        $order->update_meta_data(self::META_REQUEST_AGREED_AT, gmdate('Y-m-d H:i:s'));
+    }
+
+    /** Did the buyer tell the creator what to say? */
+    public static function hasRequest(WC_Order $order): bool
+    {
+        return (string) $order->get_meta(self::META_REQUEST_NAME) !== '';
+    }
+
     public static function snapshot(WC_Order $order, int $productId, array $request): void
     {
         $order->update_meta_data(self::META_KIND, self::KIND);
@@ -644,22 +693,28 @@ final class MessageVideo
     }
 
     /** The request, for display on either side of the order. */
-    public static function renderRequestSummary(WC_Order $order): string
+    public static function renderRequestSummary(WC_Order $order, bool $withLength = true): string
     {
         $length = (string) $order->get_meta(self::META_LENGTH);
         $body   = (string) $order->get_meta(self::META_REQUEST_BODY);
+
+        // An option purchase has no length: the creator never set one,
+        // because they never made a listing for it.
+        $lengthRow = $withLength && $length !== ''
+            ? sprintf('<tr><th>動画時間</th><td>%s</td></tr>', esc_html(self::lengths()[$length] ?? '—'))
+            : '';
 
         return sprintf(
             '<table class="mk-video-summary"><tbody>'
             . '<tr><th>メッセージの種類</th><td>%s</td></tr>'
             . '<tr><th>呼んでほしいお名前</th><td>%s</td></tr>'
             . '<tr><th>入れてほしい内容</th><td>%s</td></tr>'
-            . '<tr><th>動画時間</th><td>%s</td></tr>'
+            . '%s'
             . '</tbody></table>',
             esc_html((string) $order->get_meta(self::META_TYPE_LABEL)),
             esc_html((string) $order->get_meta(self::META_REQUEST_NAME)),
             $body !== '' ? nl2br(esc_html($body)) : '<span class="mk-muted">（指定なし）</span>',
-            esc_html(self::lengths()[$length] ?? '—')
+            $lengthRow
         );
     }
 }
