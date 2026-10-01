@@ -52,9 +52,24 @@ final class Receipt
 
         self::renderShippingPanel($order);
 
-        if ($status === Statuses::SHIPPED) {
-            self::renderConfirmButton($order);
+        if ($status !== Statuses::SHIPPED) {
+            return;
         }
+
+        // The parcel has arrived and the recording has not. Confirming now
+        // would pay for something nobody has made (2026-10-01).
+        if (Delivery::isPending($order)) {
+            printf(
+                '<section class="mk-receipt"><h2>受取確認</h2>'
+                . '<p>%1$sの納品がまだのため、受取確認はできません。'
+                . '%1$sが届きましたら、このページから受取確認を行っていただけます。</p></section>',
+                esc_html(Delivery::noun($order))
+            );
+
+            return;
+        }
+
+        self::renderConfirmButton($order);
     }
 
     /**
@@ -167,6 +182,14 @@ final class Receipt
         // Transitions::onReceived and queue a second transfer for the same
         // money.
         if ($order->get_status() !== Statuses::SHIPPED) {
+            wp_safe_redirect($order->get_view_order_url());
+            exit;
+        }
+
+        // The panel hides the button while a recording is outstanding; this
+        // is the rule behind it. A posted form is not a button, and the money
+        // moves from here.
+        if (Delivery::isPending($order)) {
             wp_safe_redirect($order->get_view_order_url());
             exit;
         }

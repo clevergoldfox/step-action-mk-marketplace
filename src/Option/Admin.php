@@ -60,11 +60,12 @@ final class Admin
         echo '<h2>登録済みのオプション</h2>';
         echo '<table class="wp-list-table widefat fixed striped"><thead><tr>'
             . '<th style="width:60px">ID</th><th>名称</th>'
-            . '<th style="width:100px">並び順</th><th style="width:100px">状態</th>'
-            . '<th style="width:220px">操作</th></tr></thead><tbody>';
+            . '<th style="width:220px">納品の有無</th>'
+            . '<th style="width:90px">並び順</th><th style="width:90px">状態</th>'
+            . '<th style="width:110px">操作</th></tr></thead><tbody>';
 
         if (!$groups) {
-            echo '<tr><td colspan="5">まだ登録がありません。下のフォームから追加してください。</td></tr>';
+            echo '<tr><td colspan="6">まだ登録がありません。下のフォームから追加してください。</td></tr>';
         }
 
         foreach ($groups as $g) {
@@ -76,7 +77,21 @@ final class Admin
             printf('<td>%d</td>', (int) $g->id);
             printf('<td><input type="text" name="name" value="%s" style="width:100%%" required></td>',
                 esc_attr((string) $g->name));
-            printf('<td><input type="number" name="sort_order" value="%d" style="width:80px"></td>',
+
+            echo '<td><select name="delivery_kind" style="width:100%">';
+
+            foreach (Service::deliveryKinds() as $kindKey => $kindLabel) {
+                printf(
+                    '<option value="%s"%s>%s</option>',
+                    esc_attr($kindKey),
+                    selected((string) ($g->delivery_kind ?? ''), $kindKey, false),
+                    esc_html($kindLabel)
+                );
+            }
+
+            echo '</select></td>';
+
+            printf('<td><input type="number" name="sort_order" value="%d" style="width:70px"></td>',
                 (int) $g->sort_order);
             printf('<td><label><input type="checkbox" name="is_active" value="1"%s> 有効</label></td>',
                 $g->is_active ? ' checked' : '');
@@ -94,6 +109,19 @@ final class Admin
             . '<th><label for="mk_new_name">名称</label></th>'
             . '<td><input type="text" id="mk_new_name" name="name" class="regular-text" '
             . 'placeholder="例：ギフトラッピング" required></td></tr>'
+            . '<tr><th><label for="mk_new_kind">納品の有無</label></th><td>';
+
+        echo '<select id="mk_new_kind" name="delivery_kind">';
+
+        foreach (Service::deliveryKinds() as $kindKey => $kindLabel) {
+            printf('<option value="%s">%s</option>', esc_attr($kindKey), esc_html($kindLabel));
+        }
+
+        echo '</select>'
+            . '<p class="description">「後から納品」を選ぶと、<strong>そのオプションが購入された取引は、'
+            . 'クリエイターが動画・音声を送信するまで完了しません</strong>（売上も確定しません）。'
+            . '商品と一緒に届くもの（直筆サイン・ラッピングなど）は「納品なし」のままにしてください。</p>'
+            . '</td></tr>'
             . '<tr><th><label for="mk_new_sort">並び順</label></th>'
             . '<td><input type="number" id="mk_new_sort" name="sort_order" value="0" style="width:80px">'
             . '<p class="description">小さい数字ほど先に表示されます。</p></td></tr></table>';
@@ -120,12 +148,15 @@ final class Admin
         $name    = isset($_POST['name']) ? sanitize_text_field(wp_unslash($_POST['name'])) : '';
         $sort    = isset($_POST['sort_order']) ? (int) $_POST['sort_order'] : 0;
         $id      = isset($_POST['group_id']) ? (int) $_POST['group_id'] : 0;
+        $kind    = isset($_POST['delivery_kind'])
+            ? Service::normaliseKind(sanitize_key(wp_unslash((string) $_POST['delivery_kind'])))
+            : '';
 
         try {
             if ($id > 0) {
-                $service->updateGroup($id, $name, $sort, !empty($_POST['is_active']));
+                $service->updateGroup($id, $name, $sort, !empty($_POST['is_active']), $kind);
             } else {
-                $service->createGroup($name, $sort);
+                $service->createGroup($name, $sort, $kind);
             }
         } catch (\Throwable $e) {
             wp_safe_redirect(admin_url('admin.php?page=' . self::SLUG));

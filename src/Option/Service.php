@@ -30,6 +30,39 @@ use RuntimeException;
  */
 final class Service
 {
+    /**
+     * What a creator still owes after the money is taken.
+     *
+     * '' is an option that travels with the parcel -- wrapping, a signature
+     * on the card inside it. The other two are recordings, which arrive on
+     * their own and keep the order open until they do.
+     *
+     * @return array<string, string>
+     */
+    public static function deliveryKinds(): array
+    {
+        return [
+            ''      => '納品なし（商品と一緒に届く）',
+            'video' => 'メッセージ動画（後から納品）',
+            'audio' => 'メッセージ音声（後から納品）',
+        ];
+    }
+
+    public static function deliveryLabel(string $kind): string
+    {
+        return self::deliveryKinds()[$kind] ?? self::deliveryKinds()[''];
+    }
+
+    /** Short name for the thing itself, for a sentence. */
+    public static function deliveryNoun(string $kind): string
+    {
+        return match ($kind) {
+            'video' => 'メッセージ動画',
+            'audio' => 'メッセージ音声',
+            default => '',
+        };
+    }
+
     // --------------------------------------------------------------- groups
 
     /** @return array<int, object> active groups, in display order */
@@ -53,7 +86,7 @@ final class Service
         ) ?: [];
     }
 
-    public function createGroup(string $name, int $sortOrder = 0): int
+    public function createGroup(string $name, int $sortOrder = 0, string $deliveryKind = ''): int
     {
         $name = trim($name);
 
@@ -65,15 +98,25 @@ final class Service
 
         $wpdb->insert(
             $wpdb->prefix . 'mk_option_groups',
-            ['name' => $name, 'sort_order' => $sortOrder, 'is_active' => 1],
-            ['%s', '%d', '%d']
+            [
+                'name'          => $name,
+                'sort_order'    => $sortOrder,
+                'is_active'     => 1,
+                'delivery_kind' => self::normaliseKind($deliveryKind),
+            ],
+            ['%s', '%d', '%d', '%s']
         );
 
         return (int) $wpdb->insert_id;
     }
 
-    public function updateGroup(int $id, string $name, int $sortOrder, bool $active): void
-    {
+    public function updateGroup(
+        int $id,
+        string $name,
+        int $sortOrder,
+        bool $active,
+        ?string $deliveryKind = null
+    ): void {
         $name = trim($name);
 
         if ($name === '') {
@@ -82,13 +125,56 @@ final class Service
 
         global $wpdb;
 
-        $wpdb->update(
-            $wpdb->prefix . 'mk_option_groups',
-            ['name' => $name, 'sort_order' => $sortOrder, 'is_active' => $active ? 1 : 0],
-            ['id' => $id],
-            ['%s', '%d', '%d'],
-            ['%d']
-        );
+        $data    = ['name' => $name, 'sort_order' => $sortOrder, 'is_active' => $active ? 1 : 0];
+        $formats = ['%s', '%d', '%d'];
+
+        // null leaves it alone: a caller that does not know about delivery
+        // should not silently turn it off.
+        if ($deliveryKind !== null) {
+            $data['delivery_kind'] = self::normaliseKind($deliveryKind);
+            $formats[]             = '%s';
+        }
+
+        $wpdb->update($wpdb->prefix . 'mk_option_groups', $data, ['id' => $id], $formats, ['%d']);
+    }
+
+    public static function normaliseKind(string $kind): string
+    {
+        return isset(self::deliveryKinds()[$kind]) ? $kind : '';
+    }
+
+    /**
+     * The delivery kinds among a set of option groups.
+     *
+     * @param int[] $groupIds
+     * @return array<int, string> group id => kind, only those that need one
+     */
+    public function deliveryKindsFor(array $groupIds): array
+    {
+        $groupIds = array_values(array_filter(array_map('intval', $groupIds)));
+
+        if ($groupIds === []) {
+            return [];
+        }
+
+        global $wpdb;
+
+        $in   = implode(',', array_fill(0, count($groupIds), '%d'));
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, delivery_kind FROM {$wpdb->prefix}mk_option_groups
+                  WHERE id IN ({$in}) AND delivery_kind <> ''",
+                ...$groupIds
+            )
+        ) ?: [];
+
+        $out = [];
+
+        foreach ($rows as $row) {
+            $out[(int) $row->id] = (string) $row->delivery_kind;
+        }
+
+        return $out;
     }
 
     /**

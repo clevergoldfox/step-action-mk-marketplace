@@ -130,7 +130,7 @@ final class VideoDelivery
 
     public static function renderForCreator(WC_Order $order): void
     {
-        if (!MessageVideo::isMessageVideoOrder($order)) {
+        if (!Delivery::needsDelivery($order)) {
             return;
         }
 
@@ -141,25 +141,48 @@ final class VideoDelivery
         }
 
         echo '<div class="dokan-panel dokan-panel-default mk-video-delivery">';
-        echo '<div class="dokan-panel-heading"><strong>メッセージ動画のリクエスト</strong></div>';
+        printf('<div class="dokan-panel-heading"><strong>%sのリクエスト</strong></div>',
+            esc_html(Delivery::noun($order)));
         echo '<div class="dokan-panel-body">';
 
-        echo MessageVideo::renderRequestSummary($order); // escaped inside
+        echo self::requestSummary($order); // escaped inside
 
         $status = $order->get_status();
+        $open   = in_array($status, [Statuses::PAID, Statuses::SHIPPED], true);
 
-        if ($status === Statuses::PAID && self::isDeclined($order)) {
+        if ($open && self::isDeclined($order)) {
             echo '<div class="dokan-alert dokan-alert-info">'
                 . '<strong>辞退を受け付けました。</strong><br>'
                 . '運営が内容を確認しています。確認が完了するまでお待ちください。</div>';
-        } elseif ($status === Statuses::PAID) {
+        } elseif ($open && !Delivery::isDelivered($order)) {
             self::renderSendForm($order);
             self::renderDeclineForm($order);
-        } elseif (in_array($status, [Statuses::SHIPPED, Statuses::RECEIVED, 'completed'], true)) {
+        } elseif (Delivery::isDelivered($order)) {
             self::renderSent($order);
         }
 
         echo '</div></div>';
+    }
+
+    /**
+     * What the buyer asked for, or where to find out.
+     *
+     * The listings collected a request at checkout. An option bought on an
+     * ordinary item has no such form -- the buyer adds メッセージ動画 to a
+     * mug -- so rather than print a table of empty rows, the panel points at
+     * the conversation attached to the order, which both sides already have.
+     */
+    private static function requestSummary(WC_Order $order): string
+    {
+        if (MessageVideo::isMessageVideoOrder($order)) {
+            return MessageVideo::renderRequestSummary($order);
+        }
+
+        return sprintf(
+            '<p class="mk-field-help">%sのオプション付きのご注文です。'
+            . 'ご希望の内容は、この取引のメッセージからご確認ください。</p>',
+            esc_html(Delivery::noun($order))
+        );
     }
 
     private static function renderSendForm(WC_Order $order): void
@@ -169,26 +192,36 @@ final class VideoDelivery
             self::NONCE_SEND
         );
 
-        echo '<h4 class="mk-video-delivery__heading">動画を送信する</h4>';
+        $noun  = Delivery::noun($order);
+        $audio = Delivery::kind($order) === 'audio';
+
+        printf('<h4 class="mk-video-delivery__heading">%sを送信する</h4>', esc_html($noun));
 
         printf(
-            '<p class="mk-field-help">撮影した動画をご自身のVimeoアカウントに<strong>限定公開</strong>でアップロードし、'
-            . 'そのURLを貼り付けて送信してください。送信期限：<strong class="mk-due">%s</strong></p>',
+            '<p class="mk-field-help">%1$sを%2$sに<strong>限定公開</strong>でアップロードし、'
+            . 'そのURLを貼り付けて送信してください。送信期限：<strong class="mk-due">%3$s</strong></p>',
+            esc_html($noun),
+            $audio ? 'ご自身のクラウド（Googleドライブ・Dropbox等）' : 'ご自身のVimeoアカウント',
             esc_html(DispatchDeadline::dueLabel($order))
         );
 
         printf('<form method="post" action="%s">', esc_url($action));
 
-        echo '<div class="dokan-form-group">'
-            . '<label class="dokan-form-label" for="mk_video_url">VimeoのURL<span class="required">*</span></label>'
+        printf(
+            '<div class="dokan-form-group">'
+            . '<label class="dokan-form-label" for="mk_video_url">%s<span class="required">*</span></label>'
             . '<input type="url" name="mk_video_url" id="mk_video_url" class="dokan-form-control" required '
-            . 'placeholder="https://vimeo.com/123456789/abcdef1234" inputmode="url">'
-            . '</div>';
+            . 'placeholder="%s" inputmode="url">'
+            . '</div>',
+            $audio ? '音声ファイルのURL' : 'VimeoのURL',
+            $audio ? 'https://drive.google.com/...' : 'https://vimeo.com/123456789/abcdef1234'
+        );
 
         echo '<p class="mk-field-help">送信すると購入者に通知され、購入者が内容を確認して「受取完了」を押すと取引完了となります。'
             . (int) get_option('mk_auto_complete_days', 7) . '日間受取完了がない場合は、自動的に受取完了となります。</p>';
 
-        echo '<button type="submit" class="dokan-btn dokan-btn-theme">動画を送信する</button>';
+        printf('<button type="submit" class="dokan-btn dokan-btn-theme">%sを送信する</button>',
+            esc_html($noun));
         echo '</form>';
     }
 
@@ -260,7 +293,7 @@ final class VideoDelivery
 
         $order = wc_get_order((int) $_GET['mk_send_video']);
 
-        if (!$order instanceof WC_Order || !MessageVideo::isMessageVideoOrder($order)) {
+        if (!$order instanceof WC_Order || !Delivery::needsDelivery($order)) {
             return;
         }
 
@@ -268,9 +301,13 @@ final class VideoDelivery
 
         $back = dokan_get_navigation_url('orders');
 
-        // Only once, only from 購入済, and never on top of a decline the
-        // operator has not ruled on yet.
-        if ($order->get_status() !== Statuses::PAID || self::isDeclined($order)) {
+        // Only once, never on top of a decline the operator has not ruled on
+        // yet, and from either side of the parcel: a recording bought as an
+        // option can be sent before the item goes out or after it has.
+        if (!in_array($order->get_status(), [Statuses::PAID, Statuses::SHIPPED], true)
+            || self::isDeclined($order)
+            || Delivery::isDelivered($order)
+        ) {
             wp_safe_redirect($back);
             exit;
         }
@@ -282,13 +319,37 @@ final class VideoDelivery
             exit;
         }
 
+        $was  = $order->get_status();
+        $noun = Delivery::noun($order);
+
         $order->update_meta_data(self::META_URL, $url);
         $order->update_meta_data(self::META_SENT_AT, gmdate('Y-m-d H:i:s'));
         $order->save();
 
-        // The same edge a registered parcel takes, so everything downstream
-        // -- auto-complete, the buyer's notice, the payout -- follows unchanged.
-        $order->update_status(Statuses::SHIPPED, 'クリエイターがメッセージ動画を送信しました。');
+        if ($was === Statuses::SHIPPED) {
+            // The parcel went first. Both halves are done, so the clock that
+            // Transitions::onShipped deliberately did not start, starts here.
+            Jobs::scheduleAutoComplete($order->get_id());
+
+            $order->add_order_note(sprintf(
+                '%sを納品しました。商品は発送済みのため、%d日後に自動的に受取確認となります。',
+                $noun,
+                (int) get_option('mk_auto_complete_days', 7)
+            ));
+            $order->save();
+        } elseif (Delivery::needsShipping($order)) {
+            // Recording first, parcel still to come: the order stays where it
+            // is and the dispatch deadline keeps running.
+            $order->add_order_note(sprintf(
+                '%sを納品しました。商品の発送登録が済むと取引が進みます。',
+                $noun
+            ));
+            $order->save();
+        } else {
+            // Nothing to post: the recording IS the dispatch, which is how
+            // the message-video listings worked before options existed.
+            $order->update_status(Statuses::SHIPPED, sprintf('クリエイターが%sを送信しました。', $noun));
+        }
 
         wp_safe_redirect(add_query_arg('mk_video_sent', '1', $back));
         exit;
@@ -423,7 +484,7 @@ final class VideoDelivery
 
     public static function renderForBuyer(WC_Order $order): void
     {
-        if (!MessageVideo::isMessageVideoOrder($order) || get_current_user_id() !== $order->get_customer_id()) {
+        if (!Delivery::needsDelivery($order) || get_current_user_id() !== $order->get_customer_id()) {
             return;
         }
 
@@ -433,16 +494,27 @@ final class VideoDelivery
             return;
         }
 
-        echo '<section class="mk-video-panel"><h2>メッセージ動画</h2>';
-        echo MessageVideo::renderRequestSummary($order); // escaped inside
+        $noun  = Delivery::noun($order);
+        $audio = Delivery::kind($order) === 'audio';
 
-        if ($status === Statuses::PAID) {
+        printf('<section class="mk-video-panel"><h2>%s</h2>', esc_html($noun));
+
+        if (MessageVideo::isMessageVideoOrder($order)) {
+            echo MessageVideo::renderRequestSummary($order); // escaped inside
+        } else {
+            printf(
+                '<p class="mk-video-panel__notice">ご希望の内容は、この取引のメッセージからクリエイターへお伝えください。</p>'
+            );
+        }
+
+        if (!Delivery::isDelivered($order)) {
             if (self::isDeclined($order)) {
                 echo '<p class="mk-video-panel__notice">クリエイターが今回のリクエストをお受けできないとの連絡がありました。'
                     . '運営が内容を確認のうえ、対応を決定いたします。結果はメールでお知らせします。</p>';
             } else {
                 printf(
-                    '<p class="mk-video-panel__notice">クリエイターが撮影中です。<strong class="mk-due">%s頃まで</strong>に送信される予定です。'
+                    '<p class="mk-video-panel__notice">クリエイターが準備中です。'
+                    . '<strong class="mk-due">%s頃まで</strong>に送信される予定です。'
                     . '送信されるとメールでお知らせします。</p>',
                     esc_html(DispatchDeadline::dueLabel($order))
                 );
@@ -456,12 +528,16 @@ final class VideoDelivery
         $url = (string) $order->get_meta(self::META_URL);
 
         printf(
-            '<p><a class="mk-video-panel__watch" href="%s" target="_blank" rel="noopener noreferrer">動画を見る</a></p>',
-            esc_url($url)
+            '<p><a class="mk-video-panel__watch" href="%s" target="_blank" rel="noopener noreferrer">%s</a></p>',
+            esc_url($url),
+            $audio ? '音声を聴く' : '動画を見る'
         );
 
-        echo '<p class="mk-video-panel__rules"><strong>動画のURLの第三者への共有・転載・再配布は禁止されています。</strong>'
-            . 'ご自身で視聴する目的でのみご利用ください。</p>';
+        printf(
+            '<p class="mk-video-panel__rules"><strong>%sのURLの第三者への共有・転載・再配布は禁止されています。</strong>'
+            . 'ご自身でご視聴になる目的でのみご利用ください。</p>',
+            esc_html($noun)
+        );
 
         if ($status === Statuses::SHIPPED) {
             printf(

@@ -74,6 +74,22 @@ final class Transitions
         // deadline any more.
         Jobs::cancelDispatchOverdue($order->get_id());
 
+        // An order carrying メッセージ動画 / メッセージ音声 is not over when
+        // the parcel lands. Starting the seven-day clock here would confirm
+        // receipt of a recording nobody has made yet and pay for it
+        // (2026-10-01). VideoDelivery starts the clock when it arrives.
+        if (Delivery::isPending($order)) {
+            $order->add_order_note(sprintf(
+                '%sされました。%sの納品がまだのため、取引は完了しません。'
+                . '納品が済み次第、自動受取確認までの日数が始まります。',
+                DispatchDeadline::verb($order),
+                Delivery::noun($order)
+            ));
+            $order->save();
+
+            return;
+        }
+
         Jobs::scheduleAutoComplete($order->get_id());
 
         $days = (int) get_option('mk_auto_complete_days', 7);

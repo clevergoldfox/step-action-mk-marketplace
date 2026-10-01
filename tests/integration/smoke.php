@@ -2576,8 +2576,12 @@ if (!$videoSeller || !$videoBuyer) {
     check('辞退を認めなければ撮影に戻る', !MK\Order\VideoDelivery::isDeclined($videoOrder));
     check('期限は再設定される', !MK\Order\DispatchDeadline::isOverdue($videoOrder));
 
-    // 送信 → 購入者に動画と受取完了
+    // 送信 → 購入者に動画と受取完了。
+    // URLと送信日時はhandleSendが必ず一緒に書く。片方だけのフィクスチャは
+    // 現実には起きない状態で、2026-10-01の「納品されたか」の判定を
+    // 誤って落としていた。
     $videoOrder->update_meta_data(MK\Order\VideoDelivery::META_URL, 'https://vimeo.com/123456789/abcdef1234');
+    $videoOrder->update_meta_data(MK\Order\VideoDelivery::META_SENT_AT, gmdate('Y-m-d H:i:s'));
     $videoOrder->save();
     $videoOrder->update_status(MK\Order\Statuses::SHIPPED, 'smoke');
     $videoOrder = wc_get_order($videoOrderId);
@@ -4448,6 +4452,130 @@ if ($slSeller) {
 check('件数表示が日本語',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite') === '表示中のクリエイター：%s件',
     _n('Total store showing: %s', 'Total stores showing: %s', 4, 'dokan-lite'));
+
+echo "
+=== 納品が必要なオプション（メッセージ動画・音声） ===
+";
+$OS = MK\Option\Service::class;
+$dv = new MK\Option\Service();
+
+check('納品の種類は3つ', count($OS::deliveryKinds()) === 3, implode(' / ', array_keys($OS::deliveryKinds())));
+check('知らない種類は「なし」に落ちる', $OS::normaliseKind('nonsense') === '');
+
+// 運営が用意した3つのオプション。
+$dvGroups = [];
+
+foreach ($dv->activeGroups() as $dvGroup) {
+    $dvGroups[(string) $dvGroup->name] = $dvGroup;
+}
+
+check('メッセージ動画がある', isset($dvGroups['メッセージ動画'])
+    && (string) $dvGroups['メッセージ動画']->delivery_kind === 'video');
+check('メッセージ音声がある', isset($dvGroups['メッセージ音声'])
+    && (string) $dvGroups['メッセージ音声']->delivery_kind === 'audio');
+check('直筆サインは納品なし', isset($dvGroups['直筆サイン'])
+    && (string) $dvGroups['直筆サイン']->delivery_kind === '');
+check('【仮】のオプションは無効になった', (static function (array $groups): bool {
+    foreach ($groups as $name => $group) {
+        if (str_starts_with($name, '【仮】')) {
+            return false;
+        }
+    }
+
+    return true;
+})($dvGroups), implode(' / ', array_keys($dvGroups)));
+
+$dvVideoId = isset($dvGroups['メッセージ動画']) ? (int) $dvGroups['メッセージ動画']->id : 0;
+$dvSignId  = isset($dvGroups['直筆サイン']) ? (int) $dvGroups['直筆サイン']->id : 0;
+
+check('納品が必要なオプションだけ拾う',
+    $dv->deliveryKindsFor([$dvVideoId, $dvSignId]) === [$dvVideoId => 'video'],
+    wp_json_encode($dv->deliveryKindsFor([$dvVideoId, $dvSignId])));
+
+// 取引：商品＋メッセージ動画オプション。
+$dvCreator = get_user_by('login', 'mk_test_creator');
+
+if (!$dvCreator || $dvVideoId === 0) {
+    check('納品待ちの取引', false, 'fixtures missing');
+} else {
+    $dvOrder = wc_create_order(['status' => 'pending']);
+    $dvOrder->update_meta_data('_mk_creator_id', $dvCreator->ID);
+    $dvOrder->update_meta_data(MK\Order\Delivery::META_OPTION_IDS, (string) $dvVideoId);
+    $dvOrder->update_meta_data(MK\Order\Delivery::META_KIND, 'video');
+    $dvOrder->update_meta_data(MK\Order\DispatchDeadline::META_DISPATCH, '2-3');
+    $dvOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT,
+        gmdate('Y-m-d H:i:s', time() + 2 * DAY_IN_SECONDS));
+    $dvOrder->save();
+    $dvId = $dvOrder->get_id();
+
+    $dvOrder = wc_get_order($dvId);
+    check('納品待ちと判定される', MK\Order\Delivery::needsDelivery($dvOrder)
+        && MK\Order\Delivery::isPending($dvOrder));
+    check('商品の発送も必要なまま', MK\Order\Delivery::needsShipping($dvOrder));
+    check('名前が出せる', MK\Order\Delivery::noun($dvOrder) === 'メッセージ動画');
+
+    // 発送しても完了しない。
+    $dvOrder->set_status(MK\Order\Statuses::PAID);
+    $dvOrder->save();
+    $dvOrder = wc_get_order($dvId);
+    $dvOrder->update_meta_data(MK\Order\Shipping::META_SHIPPED_AT, gmdate('Y-m-d H:i:s'));
+    $dvOrder->set_status(MK\Order\Statuses::SHIPPED);
+    $dvOrder->save();
+
+    check('発送しても自動受取確認は予約されない',
+        !as_next_scheduled_action('mk_auto_complete_order', ['order_id' => $dvId], 'mk-marketplace'));
+
+    $dvNotes = wc_get_order_notes(['order_id' => $dvId, 'limit' => 5]);
+    check('理由が注文メモに残る', (static function (array $notes): bool {
+        foreach ($notes as $note) {
+            if (str_contains($note->content, '納品がまだのため')) {
+                return true;
+            }
+        }
+
+        return false;
+    })($dvNotes));
+
+    // 購入者の画面に受取確認ボタンを出さない。
+    $dvBefore = get_current_user_id();
+    wp_set_current_user((int) $dvOrder->get_customer_id());
+    ob_start(); MK\Order\Receipt::render(wc_get_order($dvId)); $dvPanel = (string) ob_get_clean();
+    wp_set_current_user($dvBefore);
+    check('納品前は受取確認できない',
+        !str_contains($dvPanel, 'mk_receive') || str_contains($dvPanel, '納品がまだのため'),
+        $dvPanel === '' ? '(パネルなし)' : '');
+
+    // 納品すると、そこから自動受取確認の時計が動き出す。
+    $dvOrder = wc_get_order($dvId);
+    $dvOrder->update_meta_data(MK\Order\VideoDelivery::META_URL, 'https://vimeo.com/123456789/abc');
+    $dvOrder->update_meta_data(MK\Order\VideoDelivery::META_SENT_AT, gmdate('Y-m-d H:i:s'));
+    $dvOrder->save();
+
+    check('納品済みと判定される', MK\Order\Delivery::isDelivered(wc_get_order($dvId))
+        && !MK\Order\Delivery::isPending(wc_get_order($dvId)));
+
+    MK\Schedule\Jobs::scheduleAutoComplete($dvId);
+    check('納品後は自動受取確認が予約できる',
+        (bool) as_next_scheduled_action('mk_auto_complete_order', ['order_id' => $dvId], 'mk-marketplace'));
+
+    as_unschedule_all_actions('mk_auto_complete_order', ['order_id' => $dvId], 'mk-marketplace');
+
+    // 直筆サインだけなら、これまでどおり発送で完了する。
+    $dvPlain = wc_create_order(['status' => 'pending']);
+    $dvPlain->update_meta_data('_mk_creator_id', $dvCreator->ID);
+    $dvPlain->update_meta_data(MK\Order\Delivery::META_OPTION_IDS, (string) $dvSignId);
+    $dvPlain->update_meta_data(MK\Order\Delivery::META_KIND, '');
+    $dvPlain->save();
+    check('直筆サインだけなら納品待ちにならない',
+        !MK\Order\Delivery::needsDelivery(wc_get_order($dvPlain->get_id())));
+
+    wc_get_order($dvId)->delete(true);
+    wc_get_order($dvPlain->get_id())->delete(true);
+    check('納品テストの後片付け', !wc_get_order($dvId));
+}
+
+check('デジタルコンテンツは出品できない',
+    !(bool) apply_filters('mk_message_video_listing_enabled', false));
 
 echo "
 === メールの差出人 ===

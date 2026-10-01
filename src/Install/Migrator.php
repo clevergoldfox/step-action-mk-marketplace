@@ -15,7 +15,7 @@ namespace MK\Install;
 final class Migrator
 {
     /** Bump when a table definition changes. */
-    public const SCHEMA_VERSION = 15;
+    public const SCHEMA_VERSION = 16;
 
     private const OPTION_VERSION = 'mk_schema_version';
 
@@ -90,11 +90,16 @@ final class Migrator
 
         // Admin-defined option types. Deliberately carries no price: the
         // creator sets the price per product in mk_product_options.
+        // delivery_kind: '' for an option that travels with the parcel
+        // (直筆サイン), 'video' or 'audio' for one the creator has to send
+        // afterwards. An order carrying one of the latter does not complete
+        // until it arrives -- see Order\Delivery.
         $tables[] = "CREATE TABLE {$p}mk_option_groups (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             name VARCHAR(120) NOT NULL,
             sort_order INT NOT NULL DEFAULT 0,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
+            delivery_kind VARCHAR(20) NOT NULL DEFAULT '',
             PRIMARY KEY (id),
             KEY active_sorted (is_active, sort_order)
         ) {$charset};";

@@ -238,6 +238,15 @@ final class MessageVideo
 
         $productId = (int) ($postId ?: (is_object($post) ? ($post->ID ?? 0) : 0));
         $isVideo   = self::isMessageVideo($productId);
+
+        // Withdrawn as a listing of its own (client, 2026-10-01): a message
+        // is a paid option on an ordinary item now. The fields stay reachable
+        // for the listings that already exist -- a creator with one still has
+        // to be able to edit its types and its length -- and are simply not
+        // offered to anybody else.
+        if (!$isVideo && !(bool) apply_filters('mk_message_video_listing_enabled', false)) {
+            return;
+        }
         $chosen    = $productId > 0 ? array_keys(self::supportedTypes($productId)) : [];
         $length    = $productId > 0 ? self::lengthOf($productId) : self::DEFAULT_LENGTH;
         $delivery  = $productId > 0 ? self::deliveryOf($productId) : self::DEFAULT_DELIVERY;

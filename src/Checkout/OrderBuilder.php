@@ -5,6 +5,8 @@ namespace MK\Checkout;
 
 use MK\Order\DispatchDeadline;
 use MK\Product\Details;
+use MK\Option\Service as OptionService;
+use MK\Order\Delivery;
 use MK\Product\MessageVideo;
 use MK\Product\Reservation;
 use MK\Stripe\AccountService;
@@ -128,6 +130,15 @@ final class OrderBuilder
         $order->update_meta_data('_mk_title_snapshot', $product->get_name());
         $order->update_meta_data('_mk_option_snapshot', $optionLabel);
         $order->update_meta_data('_mk_has_open_report', 'no');
+
+        // Which options, not just how much they cost: one of them may be a
+        // recording the creator still owes, and the order has to know that
+        // for the rest of its life (see Order\Delivery).
+        $optionIds = array_values(array_filter(array_map('intval', $optionGroupIds)));
+        $order->update_meta_data(Delivery::META_OPTION_IDS, implode(',', $optionIds));
+
+        $kinds = (new OptionService())->deliveryKindsFor($optionIds);
+        $order->update_meta_data(Delivery::META_KIND, $kinds === [] ? '' : (string) reset($kinds));
 
         // Decided once, from the listing as bought. See ShippingAddress.
         $order->update_meta_data(
