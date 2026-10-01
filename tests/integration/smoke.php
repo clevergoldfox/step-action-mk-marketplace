@@ -4021,7 +4021,7 @@ check('英語の初期設定ウィザードを出さない',
     dokan_get_option('disable_welcome_wizard', 'dokan_selling', 'off') === 'on',
     (string) dokan_get_option('disable_welcome_wizard', 'dokan_selling', 'off'));
 check('「Go to Vendor Dashboard」を日本語に',
-    apply_filters('dokan_set_go_to_vendor_dashboard_btn_text', 'Go to Vendor Dashboard') === '出品者ダッシュボードへ');
+    apply_filters('dokan_set_go_to_vendor_dashboard_btn_text', 'Go to Vendor Dashboard') === 'クリエイター管理ページへ');
 foreach ([
     'This field is required'            => 'この項目は必須です',
     'Please enter a valid email address.' => '正しいメールアドレスを入力してください。',
@@ -4477,7 +4477,7 @@ echo "
 ";
 $AD = MK\Ad\Service::class;
 check('広告の投稿タイプがある', post_type_exists(MK\Ad\Service::POST_TYPE));
-check('表示場所は2種類', count($AD::placements()) === 2, implode(' / ', $AD::placements()));
+check('表示場所は3種類', count($AD::placements()) === 3, implode(' / ', $AD::placements()));
 check('表示する相手は3種類', count($AD::audiences()) === 3, implode(' / ', $AD::audiences()));
 
 $adImage = null;
@@ -4549,9 +4549,95 @@ foreach ($adIds as $adId) {
     wp_delete_post((int) $adId, true);
 }
 
+$adImage2 = wp_insert_attachment(['post_mime_type' => 'image/png', 'post_title' => 'smoke ad 2',
+    'post_status' => 'inherit'], $adFile);
 wp_delete_attachment((int) $adImage, true);
-@unlink($adFile);
 check('広告テストの後片付け', get_post((int) $adIds[0]) === null);
+
+// クリエイター管理ページにも広告を出せる（2026-10-01）。
+$adDash = wp_insert_post([
+    'post_type'   => MK\Ad\Service::POST_TYPE,
+    'post_title'  => 'MK一時テスト広告 管理ページ',
+    'post_status' => 'publish',
+]);
+set_post_thumbnail($adDash, $adImage2);
+update_post_meta($adDash, MK\Ad\Service::META_PLACEMENT, MK\Ad\Service::PLACEMENT_DASHBOARD);
+update_post_meta($adDash, MK\Ad\Service::META_AUDIENCE, MK\Ad\Service::AUDIENCE_ALL);
+
+check('管理ページ用の広告はホームに出ない',
+    !in_array((string) $adDash, array_column($AD::active('banner', 'all'), 'id'), true));
+check('管理ページ用の広告は管理ページに出る',
+    in_array((string) $adDash, array_column($AD::active('dashboard', 'all'), 'id'), true));
+
+ob_start(); MK\Ad\Dashboard::render(); $adDashHtml = (string) ob_get_clean();
+check('管理ページの広告が描画される', str_contains($adDashHtml, 'mk-dash-ads__item'));
+check('別のタブで開く', str_contains($adDashHtml, 'target="_blank"') || !str_contains($adDashHtml, '<a '));
+
+wp_delete_post((int) $adDash, true);
+wp_delete_attachment((int) $adImage2, true);
+
+echo "
+=== 購入履歴の期限（赤字） ===
+";
+$bdCreator = get_user_by('login', 'mk_test_creator');
+
+if (!$bdCreator) {
+    check('購入履歴の期限', false, 'fixtures missing');
+} else {
+    $bdOrder = wc_create_order(['status' => 'pending']);
+    $bdOrder->update_meta_data('_mk_creator_id', $bdCreator->ID);
+    $bdOrder->update_meta_data(MK\Order\DispatchDeadline::META_DISPATCH, '2-3');
+    $bdOrder->update_meta_data(MK\Order\DispatchDeadline::META_DUE_AT,
+        gmdate('Y-m-d H:i:s', time() + 2 * DAY_IN_SECONDS));
+    $bdOrder->set_status(MK\Order\Statuses::PAID);
+    $bdOrder->save();
+    $bdOrder = wc_get_order($bdOrder->get_id());
+
+    $bdLine = MK\Order\BuyerDeadlines::line($bdOrder);
+    check('購入済みなら発送期限を出す', str_contains($bdLine, '発送期限'), $bdLine);
+
+    ob_start(); MK\Order\BuyerDeadlines::column($bdOrder); $bdHtml = (string) ob_get_clean();
+    check('赤字クラスが付く', str_contains($bdHtml, 'class="mk-due mk-due--row"'));
+    check('状態も消えていない', str_contains($bdHtml, 'mk-order-status'));
+
+    // 発送後は「いつ自動で受取確認になるか」。
+    $bdOrder->update_meta_data(MK\Order\Shipping::META_SHIPPED_AT, gmdate('Y-m-d H:i:s'));
+    $bdOrder->set_status(MK\Order\Statuses::SHIPPED);
+    $bdOrder->save();
+    $bdShipped = MK\Order\BuyerDeadlines::line(wc_get_order($bdOrder->get_id()));
+    check('発送後は自動受取確認の日を出す', str_contains($bdShipped, '自動で受取確認'), $bdShipped);
+
+    // 期限のない取引では何も出さない。
+    $bdQuiet = wc_create_order(['status' => 'pending']);
+    $bdQuiet->set_status('completed');
+    $bdQuiet->save();
+    check('期限のない取引には出さない',
+        MK\Order\BuyerDeadlines::line(wc_get_order($bdQuiet->get_id())) === '');
+
+    wc_get_order($bdOrder->get_id())->delete(true);
+    wc_get_order($bdQuiet->get_id())->delete(true);
+    check('購入履歴テストの後片付け', !wc_get_order($bdOrder->get_id()));
+}
+
+echo "
+=== 「クリエイター管理ページ」という呼び方 ===
+";
+foreach ([
+    'Dashboard'        => 'クリエイター管理ページ',
+    'Vendor Dashboard' => 'クリエイター管理ページ',
+] as $wordEn => $wordJa) {
+    // ヘッダー用と分析画面用、どちらに入っていても良い。
+    $wordJs = MK\I18n\DokanTranslations::scriptMessages()
+        + MK\I18n\DokanTranslations::analyticsMessages();
+    check('JS：' . $wordEn, ($wordJs[$wordEn] ?? '') === $wordJa, (string) ($wordJs[$wordEn] ?? ''));
+}
+
+check('翻訳ファイルからも「ダッシュボード」が消えた',
+    !str_contains((string) file_get_contents(WP_PLUGIN_DIR . '/mk-marketplace/languages/dokan-lite-ja.po'),
+        'ダッシュボード'));
+check('管理ページのWordPressページ名',
+    get_the_title((int) (get_option('dokan_pages')['dashboard'] ?? 0)) === 'クリエイター管理ページ',
+    get_the_title((int) (get_option('dokan_pages')['dashboard'] ?? 0)));
 
 echo "
 === 商品の「対象」 ===

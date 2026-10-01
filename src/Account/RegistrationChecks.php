@@ -184,7 +184,7 @@ final class RegistrationChecks
 
     public static function dashboardButton(): string
     {
-        return '出品者ダッシュボードへ';
+        return 'クリエイター管理ページへ';
     }
 
     /**

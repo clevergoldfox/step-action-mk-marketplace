@@ -33,8 +33,9 @@ final class Service
     public const META_STARTS    = '_mk_ad_starts';
     public const META_ENDS      = '_mk_ad_ends';
 
-    public const PLACEMENT_BANNER = 'banner';
-    public const PLACEMENT_POPUP  = 'popup';
+    public const PLACEMENT_BANNER    = 'banner';
+    public const PLACEMENT_POPUP     = 'popup';
+    public const PLACEMENT_DASHBOARD = 'dashboard';
 
     public const AUDIENCE_ALL   = 'all';
     public const AUDIENCE_MEN   = 'men';
@@ -44,8 +45,9 @@ final class Service
     public static function placements(): array
     {
         return [
-            self::PLACEMENT_BANNER => 'ホームのバナー',
-            self::PLACEMENT_POPUP  => 'ポップアップ（初回表示）',
+            self::PLACEMENT_BANNER    => 'ホームのバナー',
+            self::PLACEMENT_POPUP     => 'ポップアップ（初回表示）',
+            self::PLACEMENT_DASHBOARD => 'クリエイター管理ページ',
         ];
     }
 

@@ -123,12 +123,14 @@ add_action('plugins_loaded', static function (): void {
     Order\ExternalRefund::register();
     Order\VideoDelivery::register();
     Order\DokanSync::register();
+    Order\BuyerDeadlines::register();
     Creator\Onboarding::register();
     Creator\ShopName::register();
     Creator\Search::register();
     Creator\StoreProfile::register();
     Notify\MailIdentity::register();
     Ad\Admin::register();
+    Ad\Dashboard::register();
     Creator\Ranking::register();
     Creator\StoreListing::register();
     Creator\SalesAlert::register();

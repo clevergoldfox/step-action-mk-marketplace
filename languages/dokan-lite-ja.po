@@ -28,7 +28,7 @@ msgid "Settings"
 msgstr "設定"
 
 msgid "Dashboard"
-msgstr "ダッシュボード"
+msgstr "クリエイター管理ページ"
 
 msgid "Withdraw"
 msgstr "出金"
@@ -37,7 +37,7 @@ msgid "Status"
 msgstr "状態"
 
 msgid "Vendor"
-msgstr "出品者"
+msgstr "クリエイター"
 
 msgid "Commission"
 msgstr "手数料"
@@ -560,7 +560,7 @@ msgid "Net total:"
 msgstr "純合計："
 
 msgid "Vendor earning:"
-msgstr "出品者の受取額："
+msgstr "クリエイターの受取額："
 
 msgid "Subsidy:"
 msgstr "補助金："
@@ -885,7 +885,7 @@ msgid "Manage inventory for this product."
 msgstr "この商品の在庫を管理する"
 
 msgid "(Stock Keeping Unit)"
-msgstr "（商品ごとに重複しない番号。他の出品者と同じ番号は登録できません）"
+msgstr "（商品ごとに重複しない番号。他のクリエイターと同じ番号は登録できません）"
 
 msgid "On Backorder"
 msgstr "取り寄せ中"
@@ -1180,7 +1180,7 @@ msgid "Draft"
 msgstr "下書き"
 
 msgid "Sorry, You can not modify another vendor's product !"
-msgstr "他の出品者の商品は編集できません"
+msgstr "他のクリエイターの商品は編集できません"
 
 msgid "Add variation"
 msgstr "バリエーションを追加"
@@ -1318,7 +1318,7 @@ msgid "More Products"
 msgstr "このクリエイターの他の商品"
 
 msgid "Vendor Info"
-msgstr "出品者情報"
+msgstr "クリエイター情報"
 
 # --- store page and store list (client review, 2026-09-12) ---
 
@@ -1347,10 +1347,10 @@ msgid "Store"
 msgstr "クリエイター"
 
 msgid "Become a Vendor"
-msgstr "出品者になる"
+msgstr "クリエイターになる"
 
 msgid "Vendors can sell products and manage a store with a vendor dashboard."
-msgstr "出品者になると、商品を出品し、専用の管理画面でプロフィールや商品を管理できます。"
+msgstr "クリエイターになると、商品を出品し、専用の管理ページでプロフィールや商品を管理できます。"
 
 msgid "Total store showing: %s"
 msgid_plural "Total stores showing: %s"
@@ -1412,7 +1412,7 @@ msgstr "日曜日の営業時間"
 # --- admin menu and admin bar (client asked for Japanese everywhere) ---
 
 msgid "Vendors"
-msgstr "出品者"
+msgstr "クリエイター"
 
 msgid "Reverse Withdrawal"
 msgstr "出金の差し戻し"
@@ -1433,7 +1433,7 @@ msgid "Visit Stores"
 msgstr "クリエイター一覧を見る"
 
 msgid "Visit Vendor Dashboard"
-msgstr "出品者ダッシュボードを見る"
+msgstr "クリエイター管理ページを見る"
 
 msgid "Dokan"
 msgstr "マーケットプレイス"
@@ -1453,7 +1453,7 @@ msgid "I am a customer"
 msgstr "購入する（購入者として登録）"
 
 msgid "I am a vendor"
-msgstr "出品する（出品者として登録）"
+msgstr "出品する（クリエイターとして登録）"
 
 # --- seller registration fields (client review, 2026-09-13) ---
 
@@ -1565,7 +1565,7 @@ msgid "Please provide a valid email address."
 msgstr "正しいメールアドレスを入力してください。"
 
 msgid "Go to Vendor Dashboard"
-msgstr "出品者ダッシュボードへ"
+msgstr "クリエイター管理ページへ"
 
 # --- Dashboard analytics, server side (2026-09-21) ---------------------------
 # Labels for the summary cards Dokan adds to WooCommerce's revenue schema.
@@ -1575,7 +1575,7 @@ msgid "Total Earning"
 msgstr "受取額合計"
 
 msgid "Total Vendor Earning"
-msgstr "出品者の受取額合計"
+msgstr "クリエイターの受取額合計"
 
 msgid "Marketplace Discount"
 msgstr "運営負担の割引"
@@ -1584,7 +1584,7 @@ msgid "Store Discount"
 msgstr "クリエイター負担の割引"
 
 msgid "Total Vendor Discount"
-msgstr "出品者負担の割引合計"
+msgstr "クリエイター負担の割引合計"
 
 msgid "Marketplace Commission"
 msgstr "運営手数料"
@@ -1593,7 +1593,7 @@ msgid "Total Commission"
 msgstr "手数料合計"
 
 msgid "Seller Totals."
-msgstr "出品者の合計"
+msgstr "クリエイターの合計"
 
 # The order list's status filter (Assets::localize, order_statuses).
 msgid "All"

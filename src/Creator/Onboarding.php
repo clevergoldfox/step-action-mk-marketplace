@@ -584,7 +584,7 @@ final class Onboarding
         }
 
         echo '</tbody></table>';
-        echo '<p><small>※ ダッシュボードのトップに表示される売上金額は、'
+        echo '<p><small>※ 管理ページのトップに表示される売上金額は、'
             . '本サービスでは使用していない集計のため 0 円のまま変わりません。'
             . '正しい売上はこちらの表をご覧ください。</small></p>';
         echo '</div></div>';
