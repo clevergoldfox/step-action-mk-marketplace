@@ -129,6 +129,7 @@ add_action('plugins_loaded', static function (): void {
     Creator\Search::register();
     Creator\StoreProfile::register();
     Notify\MailIdentity::register();
+    Account\LoginBrand::register();
     Ad\Admin::register();
     Ad\Dashboard::register();
     Creator\Ranking::register();
